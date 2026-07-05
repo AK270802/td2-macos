@@ -1,0 +1,46 @@
+# Rust / Cargo
+/target/
+**/*.rs.bk
+
+# Node / npm
+node_modules/
+app/node_modules/
+
+# Tauri build output
+app/src-tauri/target/
+app/src-tauri/gen/
+
+# Vite / frontend build
+app/dist/
+app/dist-ssr/
+*.local
+
+# Environment / secrets
+.env
+.env.*
+!.env.example
+
+# OS artefacts
+Thumbs.db
+.DS_Store
+desktop.ini
+
+# Editor / IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Installer output
+installer/output/
+installer/*.exe
+installer/*.msi
+
+# Logs
+*.log
+logs/
+
+# SQLCipher / encrypted DB
+*.db
+*.db-shm
+*.db-wal

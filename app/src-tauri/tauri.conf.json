@@ -1,0 +1,46 @@
+{
+  "$schema": "https://schema.tauri.app/config/2.0.0",
+  "productName": "WorkPulse",
+  "version": "0.1.0",
+  "identifier": "com.baseel.workpulse",
+  "build": {
+    "frontendDist": "../dist",
+    "devUrl": "http://localhost:5173",
+    "beforeDevCommand": "npm run dev",
+    "beforeBuildCommand": "npm run build"
+  },
+  "app": {
+    "windows": [
+      {
+        "label": "main",
+        "title": "WorkPulse",
+        "width": 980,
+        "height": 660,
+        "minWidth": 900,
+        "minHeight": 560,
+        "decorations": false,
+        "visible": true,
+        "center": true
+      }
+    ],
+    "trayIcon": {
+      "id": "workpulse_tray",
+      "iconPath": "icons/32x32.png"
+    }
+  },
+  "bundle": {
+    "active": true,
+    "targets": ["nsis"],
+    "icon": ["icons/32x32.png", "icons/128x128.png", "icons/icon.ico"],
+    "windows": {
+      "nsis": {
+        "displayLanguageSelector": false,
+        "languages": ["English"],
+        "installMode": "perMachine"
+      }
+    }
+  },
+  "plugins": {
+    "shell": { "open": true }
+  }
+}

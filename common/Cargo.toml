@@ -1,0 +1,37 @@
+﻿[package]
+name = "common"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+serde = { workspace = true }
+serde_json = { workspace = true }
+tokio = { workspace = true }
+anyhow = { workspace = true }
+tracing = { workspace = true }
+rusqlite = { version = "0.31", features = ["bundled-sqlcipher-vendored-openssl"] }
+keyring = { version = "3", features = ["windows-native"] }
+reqwest = { version = "0.12", features = ["json", "multipart", "rustls-tls"], default-features = false }
+semver = "1"
+addr = "0.15"
+image = { version = "0.25", features = ["jpeg"] }
+xcap = "0.0.14"
+chrono = { version = "0.4", features = ["serde"] }
+uuid = { version = "1", features = ["v4", "serde"] }
+
+[target.'cfg(windows)'.dependencies]
+windows = { version = "0.58", features = [
+    "Win32_Foundation",
+    "Win32_UI_WindowsAndMessaging",
+    "Win32_UI_Accessibility",
+    "Win32_UI_Input_KeyboardAndMouse",
+    "Win32_System_Threading",
+    "Win32_System_ProcessStatus",
+    "Win32_System_Com",
+    "Win32_Graphics_Gdi",
+    "Win32_System_Time",
+    "Win32_System_SystemInformation",
+] }
+
+hex = "0.4"
+
