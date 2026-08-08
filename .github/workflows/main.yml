@@ -33,6 +33,14 @@ jobs:
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
 
+      # workpulse-app's build.rs checks that its bundled `agentd` resource
+      # exists on disk at compile time -- normally satisfied by Tauri's
+      # own beforeBuildCommand lifecycle hook during `tauri build`, but
+      # plain `cargo test`/`cargo clippy` never trigger that hook, so it
+      # has to be built explicitly here first.
+      - name: Build agentd
+        run: cargo build --release -p agentd
+
       - name: Run tests
         env:
           TAURI_CONFIG: '{"bundle":{"resources":{"../../target/release/agentd":"agentd"}}}'
