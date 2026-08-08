@@ -1,4 +1,4 @@
-﻿use anyhow::Result;
+use anyhow::{anyhow, Result};
 use reqwest::Client;
 use serde::Deserialize;
 use semver::Version;
@@ -7,6 +7,8 @@ use crate::models::{AgentConfig, Task, TimeStats};
 
 #[derive(Deserialize)]
 struct ConfigResponse {
+    user_id: Option<String>,
+    tenant_id: Option<String>,
     idle_threshold_sec: Option<u64>,
     screenshot_interval_sec: Option<u64>,
     screenshots_enabled: Option<bool>,
@@ -14,7 +16,9 @@ struct ConfigResponse {
     capture_interval_sec: Option<u64>,
     batch_sync_interval_min: Option<u64>,
     assignment_sync_interval_min: Option<u64>,
+    retention_days: Option<i64>,
     assigned_tasks: Option<Vec<TaskResponse>>,
+    general_activity_task_id: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -34,15 +38,28 @@ struct VersionResponse {
     download_url: Option<String>,
 }
 
+/// Field names match core-services `app/schemas/agent.py` TimeStatsResponse.
 #[derive(Deserialize)]
 struct TimeStatsResponse {
-    worked_today_sec: Option<i64>,
-    worked_week_sec: Option<i64>,
-    sessions_today: Option<i32>,
+    today_logged_sec: Option<i64>,
+    week_logged_sec: Option<i64>,
+    month_logged_sec: Option<i64>,
+    #[allow(dead_code)]
+    tasks_today: Option<serde_json::Value>,
 }
 
-pub async fn get_config(client: &Client) -> Result<(AgentConfig, Vec<Task>)> {
+pub struct RemoteIdentity {
+    pub user_id: Option<String>,
+    pub tenant_id: Option<String>,
+    pub retention_days: Option<i64>,
+    pub general_activity_task_id: Option<String>,
+}
+
+pub async fn get_config(client: &Client) -> Result<(AgentConfig, Vec<Task>, RemoteIdentity)> {
     let res = authed_get(client, "/agent/config").await?;
+    if !res.status().is_success() {
+        return Err(anyhow!("agent config failed: {}", res.status()));
+    }
     let body: ConfigResponse = res.json().await?;
     let config = AgentConfig {
         idle_threshold_sec: body.idle_threshold_sec.unwrap_or(300),
@@ -60,11 +77,16 @@ pub async fn get_config(client: &Client) -> Result<(AgentConfig, Vec<Task>)> {
         task_name: t.task_name,
         project_name: t.project_name,
     }).collect();
-    Ok((config, tasks))
+    let identity = RemoteIdentity {
+        user_id: body.user_id,
+        tenant_id: body.tenant_id,
+        retention_days: body.retention_days,
+        general_activity_task_id: body.general_activity_task_id,
+    };
+    Ok((config, tasks, identity))
 }
 
 /// Returns (update_available, download_url) using semver comparison.
-/// Fixes the false-positive bug caused by lexicographic version comparison.
 pub async fn check_version(client: &Client, current: &str) -> Result<(bool, Option<String>)> {
     let res = authed_get(client, "/agent/version").await?;
     let body: VersionResponse = res.json().await?;
@@ -76,10 +98,14 @@ pub async fn check_version(client: &Client, current: &str) -> Result<(bool, Opti
 
 pub async fn get_time_stats(client: &Client) -> Result<TimeStats> {
     let res = authed_get(client, "/agent/time-stats").await?;
+    if !res.status().is_success() {
+        return Err(anyhow!("time stats failed: {}", res.status()));
+    }
     let body: TimeStatsResponse = res.json().await?;
     Ok(TimeStats {
-        worked_today_sec: body.worked_today_sec.unwrap_or(0),
-        worked_week_sec: body.worked_week_sec.unwrap_or(0),
-        sessions_today: body.sessions_today.unwrap_or(0),
+        worked_today_sec: body.today_logged_sec.unwrap_or(0),
+        worked_week_sec: body.week_logged_sec.unwrap_or(0),
+        worked_month_sec: body.month_logged_sec.unwrap_or(0),
+        sessions_today: 0, // server does not report session count; local DB does
     })
 }

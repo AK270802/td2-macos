@@ -2,7 +2,9 @@
 use keyring::Entry;
 use uuid::Uuid;
 
-const SERVICE: &str = "WorkPulse";
+// Distinct from the legacy Python agent's "WorkPulse" keyring service so a
+// machine with both agents installed never mixes up auth tokens.
+const SERVICE: &str = "WorkPulseAgentRust";
 
 pub struct Session {
     pub user_id: Uuid,
@@ -29,5 +31,15 @@ pub fn get_refresh_token() -> Option<String> {
 pub fn clear() -> Result<()> {
     let _ = Entry::new(SERVICE, "agent_token")?.delete_credential();
     let _ = Entry::new(SERVICE, "agent_refresh_token")?.delete_credential();
+    Ok(())
+}
+
+/// Used by api::auth::refresh() so both write paths share one keyring
+/// service/account naming source instead of duplicating string literals.
+pub fn save_tokens(access_token: &str, refresh_token: Option<&str>) -> Result<()> {
+    Entry::new(SERVICE, "agent_token")?.set_password(access_token)?;
+    if let Some(rt) = refresh_token {
+        Entry::new(SERVICE, "agent_refresh_token")?.set_password(rt)?;
+    }
     Ok(())
 }

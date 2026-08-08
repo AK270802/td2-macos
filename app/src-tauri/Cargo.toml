@@ -1,6 +1,6 @@
 [package]
 name = "workpulse-app"
-version = "0.1.0"
+version = "2.0.0"
 edition = "2021"
 
 [lib]
@@ -15,9 +15,14 @@ path = "src/main.rs"
 tauri-build = { version = "2", features = [] }
 
 [dependencies]
-tauri = { version = "2", features = ["tray-icon", "image-png"] }
+tauri = { version = "2", features = ["tray-icon", "image-png", "devtools"] }
+tauri-plugin-single-instance = "2"
 tauri-plugin-shell = "2"
 tauri-plugin-notification = "2"
+tauri-plugin-autostart = "2"
+tauri-plugin-global-shortcut = "2"
+tauri-plugin-updater = "2"
+url = "2"
 common = { path = "../../common" }
 serde = { workspace = true }
 serde_json = { workspace = true }
@@ -25,6 +30,4 @@ tokio = { workspace = true }
 anyhow = { workspace = true }
 tracing = { workspace = true }
 tracing-subscriber = { workspace = true }
-
-[target.'cfg(windows)'.dependencies]
-window-vibrancy = "0.5"
+tracing-appender = { workspace = true }

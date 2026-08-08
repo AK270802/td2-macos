@@ -1,4 +1,4 @@
-﻿use anyhow::Result;
+use anyhow::Result;
 use rusqlite::Connection;
 
 pub fn ensure_schema(conn: &Connection) -> Result<()> {
@@ -55,19 +55,6 @@ pub fn ensure_schema(conn: &Connection) -> Result<()> {
             last_synced  INTEGER NOT NULL DEFAULT 0
         );
 
-        CREATE TABLE IF NOT EXISTS projects (
-            id          TEXT PRIMARY KEY,
-            name        TEXT NOT NULL,
-            description TEXT
-        );
-
-        CREATE TABLE IF NOT EXISTS tasks (
-            id          TEXT PRIMARY KEY,
-            project_id  TEXT NOT NULL,
-            name        TEXT NOT NULL,
-            description TEXT
-        );
-
         CREATE TABLE IF NOT EXISTS task_time_logs (
             id           TEXT PRIMARY KEY,
             task_id      TEXT NOT NULL,
@@ -77,6 +64,9 @@ pub fn ensure_schema(conn: &Connection) -> Result<()> {
             started_at   INTEGER NOT NULL,
             ended_at     INTEGER NOT NULL,
             duration_sec INTEGER NOT NULL,
+            idle_sec     INTEGER NOT NULL DEFAULT 0,
+            break_sec    INTEGER NOT NULL DEFAULT 0,
+            meeting_sec  INTEGER NOT NULL DEFAULT 0,
             synced       INTEGER NOT NULL DEFAULT 0
         );
 
@@ -91,5 +81,18 @@ pub fn ensure_schema(conn: &Connection) -> Result<()> {
             saved_at            INTEGER NOT NULL DEFAULT 0
         );
     ")?;
+    run_migrations(conn);
     Ok(())
+}
+
+/// Idempotent column additions for databases created before these columns
+/// existed. "duplicate column name" errors are expected and swallowed.
+fn run_migrations(conn: &Connection) {
+    for ddl in [
+        "ALTER TABLE task_time_logs ADD COLUMN idle_sec INTEGER NOT NULL DEFAULT 0",
+        "ALTER TABLE task_time_logs ADD COLUMN break_sec INTEGER NOT NULL DEFAULT 0",
+        "ALTER TABLE task_time_logs ADD COLUMN meeting_sec INTEGER NOT NULL DEFAULT 0",
+    ] {
+        let _ = conn.execute_batch(ddl);
+    }
 }

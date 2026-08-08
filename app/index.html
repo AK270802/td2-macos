@@ -3,7 +3,23 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>WorkPulse</title>
+    <title>EffiLens</title>
+    <script>
+      // Applied synchronously, before the first paint, so a light-theme user
+      // never sees a dark flash while React boots — Settings.tsx writes the
+      // same key when the user toggles theme.
+      (function () {
+        try {
+          document.documentElement.setAttribute("data-theme", localStorage.getItem("wp-theme") || "dark");
+        } catch (e) {}
+      })();
+    </script>
+    <style>
+      /* Pre-hydration paint: match whichever theme was just applied above,
+         never flash the other theme's background before CSS/React load. */
+      html, body { background: #080c18; }
+      html[data-theme="light"], html[data-theme="light"] body { background: #f3f4f8; }
+    </style>
   </head>
   <body>
     <div id="root"></div>

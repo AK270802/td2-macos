@@ -1,78 +1,167 @@
-﻿import { useState } from "react";
+import { useState } from "react";
+import { invoke } from "@tauri-apps/api/core";
 import { useAuth } from "../hooks/useAuth";
+import { useSyncStatus } from "../hooks/useSyncStatus";
+import Wordmark from "../components/Wordmark";
+import MinimalWindowControls from "../components/WindowControls";
+
+const APP_VERSION = "2.0.0";
 
 export default function LoginPage() {
-  const { login } = useAuth();
-  const [email, setEmail] = useState("");
-  const [password, setPassword] = useState("");
-  const [error, setError] = useState<string | null>(null);
-  const [loading, setLoading] = useState(false);
+    const { login } = useAuth();
+    const [email, setEmail] = useState("");
+    const [password, setPassword] = useState("");
+    const [remember, setRemember] = useState(true);
+    const [error, setError] = useState<string | null>(null);
+    const [loading, setLoading] = useState(false);
+    const agent = useSyncStatus();
 
-  const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
-    setError(null);
-    setLoading(true);
-    try {
-      await login(email, password);
-    } catch (err: any) {
-      setError(err?.toString() ?? "Login failed");
-    } finally {
-      setLoading(false);
-    }
-  };
+    const handleSubmit = async (e: React.FormEvent) => {
+        e.preventDefault();
+        setError(null);
+        setLoading(true);
+        try {
+            await login(email, password);
+        } catch (err: any) {
+            const msg = String(err ?? "");
+            setError(msg.includes("401") || msg.toLowerCase().includes("login failed")
+                ? "Invalid email or password."
+                : "Could not reach core-services. Check your connection.");
+        } finally {
+            setLoading(false);
+        }
+    };
 
-  return (
-    <div style={{ background: "var(--login-bg)", minHeight: "100vh", display: "flex", alignItems: "center", justifyContent: "center" }}>
-      <div style={{ width: 560, background: "var(--surface)", borderRadius: "var(--radius-xl)" }}>
-        {/* Brand panel */}
-        <div style={{ height: 195, background: "var(--login-brand)", borderRadius: "20px 20px 0 0",
-          display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 12 }}>
-          <svg width="48" height="48" viewBox="0 0 48 48" fill="none">
-            <path d="M4 24 L12 16 L20 28 L28 12 L36 28 L44 20" stroke="#D4A24C" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round"/>
-          </svg>
-          <span style={{ color: "#e2eaf8", fontSize: 22, fontWeight: 700, letterSpacing: -0.5 }}>WorkPulse</span>
-          <span style={{ color: "#94A3B8", fontSize: 13 }}>Workforce Intelligence Platform</span>
-        </div>
+    return (
+        <div data-tauri-drag-region style={{ display: "flex", height: "100vh", background: "var(--bg)", userSelect: "none" }}>
+            {/* ── Left: form ─────────────────────────────────────────────── */}
+            <div style={{ flex: "0 0 52%", display: "flex", flexDirection: "column", padding: "16px 64px 20px" }}>
+                <div data-tauri-drag-region style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 12 }}>
+                    <Wordmark />
+                    <MinimalWindowControls onClose={() => invoke("quit_app")} />
+                </div>
 
-        {/* Form */}
-        <form onSubmit={handleSubmit} style={{ padding: "32px 40px 36px" }}>
-          <h2 style={{ color: "var(--ink)", fontSize: 20, fontWeight: 700, margin: "0 0 24px" }}>Sign in to your account</h2>
+                <div style={{ flex: 1, display: "flex", flexDirection: "column", justifyContent: "center", maxWidth: 430 }}>
+                    <span className="wp-overline" style={{ marginBottom: 22 }}>Agent · v{APP_VERSION}</span>
 
-          {error && (
-            <div style={{ background: "#FEE2E2", border: "1px solid var(--alert)", borderRadius: 8,
-              padding: "10px 14px", color: "var(--alert)", fontSize: 13, marginBottom: 16 }}>
-              {error}
+                    <h1 className="wp-display" style={{ fontSize: 52, fontWeight: 500, lineHeight: 1.06, margin: "0 0 18px", letterSpacing: "-0.01em" }}>
+                        Precision <em style={{ color: "var(--gold-2)", fontStyle: "italic" }}>time-keeping</em>
+                        <br />for focused work.
+                    </h1>
+
+                    <p style={{ color: "var(--text-2)", fontSize: 15, margin: "0 0 34px", fontWeight: 300 }}>
+                        Sign in to sync your assignments and start tracking.
+                    </p>
+
+                    <form onSubmit={handleSubmit}>
+                        {error && (
+                            <div style={{
+                                background: "var(--red-soft)", border: "1px solid rgba(248,113,113,0.4)",
+                                borderRadius: "var(--radius)", padding: "11px 14px",
+                                color: "var(--red)", fontSize: 13, marginBottom: 18,
+                            }}>
+                                {error}
+                            </div>
+                        )}
+
+                        <label className="wp-overline" style={{ marginBottom: 8 }}>Work email</label>
+                        <input
+                            className="wp-input" type="email" value={email} required
+                            autoFocus spellCheck={false}
+                            onChange={e => setEmail(e.target.value)}
+                            style={{ marginBottom: 22 }}
+                        />
+
+                        <label className="wp-overline" style={{ marginBottom: 8 }}>Password</label>
+                        <input
+                            className="wp-input" type="password" value={password} required
+                            onChange={e => setPassword(e.target.value)}
+                            style={{ marginBottom: 20 }}
+                        />
+
+                        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 26 }}>
+                            <label style={{ display: "flex", alignItems: "center", gap: 9, cursor: "pointer", fontSize: 13, color: "var(--text-2)" }}>
+                                <span
+                                    onClick={() => setRemember(r => !r)}
+                                    style={{
+                                        width: 16, height: 16, borderRadius: 4, flexShrink: 0,
+                                        border: `1px solid ${remember ? "var(--gold)" : "var(--line-strong)"}`,
+                                        background: remember ? "var(--gold)" : "transparent",
+                                        display: "flex", alignItems: "center", justifyContent: "center",
+                                    }}>
+                                    {remember && (
+                                        <svg width="10" height="10" viewBox="0 0 10 10" fill="none" stroke="#16110a" strokeWidth="2" strokeLinecap="round">
+                                            <path d="M1.5 5.5l2.5 2.5 4.5-6" />
+                                        </svg>
+                                    )}
+                                </span>
+                                Remember this device
+                            </label>
+                            <span style={{ fontSize: 13, color: "var(--text-3)", cursor: "pointer" }}>Forgot password?</span>
+                        </div>
+
+                        <button type="submit" disabled={loading} className="wp-btn-gold"
+                            style={{ width: "100%", padding: "14px" }}>
+                            {loading ? "Signing in…" : "Sign in"}
+                        </button>
+                    </form>
+                </div>
+
+                <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                    <span style={{
+                        width: 7, height: 7, borderRadius: "50%", flexShrink: 0,
+                        background: agent.connected ? "var(--emerald)" : "var(--text-3)",
+                    }} />
+                    <span className="wp-mono" style={{ fontSize: 11, color: "var(--text-3)", letterSpacing: "0.06em" }}>
+                        core-services · {agent.connected ? "connected" : "waiting"}
+                    </span>
+                </div>
             </div>
-          )}
 
-          <div style={{ marginBottom: 16 }}>
-            <label style={{ display: "block", fontSize: 13, fontWeight: 600, color: "var(--ink-soft)", marginBottom: 6 }}>
-              Email address
-            </label>
-            <input type="email" value={email} onChange={e => setEmail(e.target.value)} required
-              style={{ width: "100%", padding: "10px 14px", borderRadius: 8, border: "1px solid var(--line)",
-                background: "var(--surface-2)", color: "var(--ink)", fontSize: 14, outline: "none" }}
-            />
-          </div>
+            {/* ── Right: instrument panel — always the dark brand panel,
+                regardless of app theme (see [data-theme-scope="dark"] in
+                tokens.css); without this scope, light theme's near-black
+                --text-1 was unreadable against this permanently-dark bg. ── */}
+            <div data-theme-scope="dark" style={{
+                flex: 1,
+                background: "radial-gradient(120% 90% at 85% 10%, #101b36 0%, #0a1122 45%, #070b16 100%)",
+                borderLeft: "1px solid var(--line)",
+                display: "flex", flexDirection: "column",
+                padding: "28px 44px 32px",
+                position: "relative", overflow: "hidden",
+            }}>
+                {/* faint texture */}
+                <svg style={{ position: "absolute", inset: 0, opacity: 0.05, pointerEvents: "none" }} width="100%" height="100%">
+                    <defs>
+                        <pattern id="grid" width="56" height="56" patternUnits="userSpaceOnUse">
+                            <path d="M56 0H0v56" fill="none" stroke="#f0f4ff" strokeWidth="0.5" />
+                        </pattern>
+                    </defs>
+                    <rect width="100%" height="100%" fill="url(#grid)" />
+                </svg>
 
-          <div style={{ marginBottom: 24 }}>
-            <label style={{ display: "block", fontSize: 13, fontWeight: 600, color: "var(--ink-soft)", marginBottom: 6 }}>
-              Password
-            </label>
-            <input type="password" value={password} onChange={e => setPassword(e.target.value)} required
-              style={{ width: "100%", padding: "10px 14px", borderRadius: 8, border: "1px solid var(--line)",
-                background: "var(--surface-2)", color: "var(--ink)", fontSize: 14, outline: "none" }}
-            />
-          </div>
+                <span className="wp-overline wp-overline--gold" style={{ alignSelf: "flex-start" }}>Instrument</span>
 
-          <button type="submit" disabled={loading}
-            style={{ width: "100%", padding: "12px", borderRadius: 8, border: "none",
-              background: loading ? "var(--brass-2)" : "var(--brass)", color: "#fff",
-              fontSize: 15, fontWeight: 700, cursor: loading ? "not-allowed" : "pointer" }}>
-            {loading ? "Signing in…" : "Sign in"}
-          </button>
-        </form>
-      </div>
-    </div>
-  );
+                <blockquote className="wp-display" style={{
+                    fontStyle: "italic", fontWeight: 400, fontSize: 34, lineHeight: 1.32,
+                    color: "var(--text-1)", margin: "26px 0 0", maxWidth: 420,
+                }}>
+                    “The clock keeps score; the operator keeps craft.”
+                </blockquote>
+
+                <div style={{ flex: 1 }} />
+
+                <div style={{ display: "flex", gap: 56 }}>
+                    <div>
+                        <span className="wp-overline" style={{ marginBottom: 8, display: "inline-block" }}>Local storage</span>
+                        <div className="wp-mono" style={{ fontSize: 14, color: "var(--text-1)" }}>SQLCipher · AES-256</div>
+                    </div>
+                    <div>
+                        <span className="wp-overline" style={{ marginBottom: 8, display: "inline-block" }}>Input capture</span>
+                        <div className="wp-mono" style={{ fontSize: 14, color: "var(--text-1)" }}>counts only</div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    );
 }

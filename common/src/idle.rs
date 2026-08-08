@@ -1,4 +1,9 @@
-﻿pub struct InputSample {
+//! Input activity sampling + idle detection.
+//!
+//! Privacy invariant: only integer counts (keystrokes, clicks, cursor
+//! distance) ever leave this module — never key identities or content.
+
+pub struct InputSample {
     pub keystroke_count: u32,
     pub mouse_click_count: u32,
     pub mouse_distance_px: f64,
@@ -6,8 +11,11 @@
 
 pub struct IdleDetector {
     pub threshold_secs: u64,
+    #[cfg(windows)]
     last_cursor_x: i32,
+    #[cfg(windows)]
     last_cursor_y: i32,
+    #[cfg(windows)]
     prev_vk_states: [bool; 256],
     pub keystroke_count: u32,
     pub mouse_click_count: u32,
@@ -18,30 +26,22 @@ impl IdleDetector {
     pub fn new(threshold_secs: u64) -> Self {
         Self {
             threshold_secs,
-            last_cursor_x: 0, last_cursor_y: 0,
+            #[cfg(windows)]
+            last_cursor_x: 0,
+            #[cfg(windows)]
+            last_cursor_y: 0,
+            #[cfg(windows)]
             prev_vk_states: [false; 256],
-            keystroke_count: 0, mouse_click_count: 0, mouse_distance_px: 0.0,
+            keystroke_count: 0,
+            mouse_click_count: 0,
+            mouse_distance_px: 0.0,
         }
     }
 
-    /// Returns idle duration in ms via GetLastInputInfo (Windows only).
-    #[cfg(windows)]
+    /// Milliseconds since last user input (all platforms via platform layer).
     pub fn idle_ms() -> u64 {
-        use windows::Win32::UI::Input::KeyboardAndMouse::{GetLastInputInfo, LASTINPUTINFO};
-        use windows::Win32::System::SystemInformation::GetTickCount;
-        unsafe {
-            let mut info = LASTINPUTINFO {
-                cbSize: std::mem::size_of::<LASTINPUTINFO>() as u32,
-                dwTime: 0,
-            };
-            let _ = GetLastInputInfo(&mut info);
-            let tick = GetTickCount();
-            tick.saturating_sub(info.dwTime) as u64
-        }
+        crate::platform::idle_ms()
     }
-
-    #[cfg(not(windows))]
-    pub fn idle_ms() -> u64 { 0 }
 
     pub fn is_idle(&self) -> bool {
         Self::idle_ms() >= self.threshold_secs * 1000
@@ -94,9 +94,18 @@ impl IdleDetector {
         }
     }
 
+    /// Non-Windows: per-key sampling isn't available without a global event
+    /// tap; activity presence is inferred from idle_ms resets instead.
     #[cfg(not(windows))]
     pub fn tick(&mut self) -> InputSample {
-        InputSample { keystroke_count: 0, mouse_click_count: 0, mouse_distance_px: 0.0 }
+        if Self::idle_ms() < 1500 {
+            self.keystroke_count += 1;
+        }
+        InputSample {
+            keystroke_count: self.keystroke_count,
+            mouse_click_count: self.mouse_click_count,
+            mouse_distance_px: self.mouse_distance_px,
+        }
     }
 
     pub fn reset_counts(&mut self) {
@@ -105,4 +114,3 @@ impl IdleDetector {
         self.mouse_distance_px = 0.0;
     }
 }
-

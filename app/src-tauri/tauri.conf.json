@@ -1,46 +1,64 @@
 {
   "$schema": "https://schema.tauri.app/config/2.0.0",
-  "productName": "WorkPulse",
-  "version": "0.1.0",
+  "productName": "EffiLens",
+  "version": "2.0.0",
   "identifier": "com.baseel.workpulse",
   "build": {
     "frontendDist": "../dist",
     "devUrl": "http://localhost:5173",
     "beforeDevCommand": "npm run dev",
-    "beforeBuildCommand": "npm run build"
+    "beforeBuildCommand": "cargo build --release -p agentd && npm run build"
   },
   "app": {
     "windows": [
       {
         "label": "main",
-        "title": "WorkPulse",
-        "width": 980,
-        "height": 660,
-        "minWidth": 900,
-        "minHeight": 560,
+        "title": "EffiLens",
+        "width": 1180,
+        "height": 780,
+        "minWidth": 980,
+        "minHeight": 640,
         "decorations": false,
         "visible": true,
         "center": true
       }
-    ],
-    "trayIcon": {
-      "id": "workpulse_tray",
-      "iconPath": "icons/32x32.png"
-    }
+    ]
   },
   "bundle": {
     "active": true,
     "targets": ["nsis"],
-    "icon": ["icons/32x32.png", "icons/128x128.png", "icons/icon.ico"],
+    "createUpdaterArtifacts": true,
+    "icon": ["icons/32x32.png", "icons/128x128.png", "icons/128x128@2x.png", "icons/icon.icns", "icons/icon.ico"],
+    "resources": {
+      "../../target/release/agentd.exe": "agentd.exe"
+    },
     "windows": {
       "nsis": {
         "displayLanguageSelector": false,
         "languages": ["English"],
-        "installMode": "perMachine"
+        "installMode": "currentUser",
+        "installerHooks": "./installer/hooks.nsh"
       }
+    },
+    "linux": {
+      "deb": {
+        "depends": ["xdotool", "xprintidle"],
+        "files": {
+          "/usr/lib/systemd/user/workpulse-agentd.service": "./installer/linux/workpulse-agentd.service"
+        }
+      }
+    },
+    "macOS": {
+      "minimumSystemVersion": "11.0"
     }
   },
   "plugins": {
-    "shell": { "open": true }
+    "shell": { "open": true },
+    "updater": {
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDVDRjE3QTYzOTU4RTcyMgpSV1FpNTFnNXBoZlBCU0M1a1NaQ09NRytHQkJxUDM2V2hqaWd5Rm5hTzNxdE9oMStJalpKeXE4TQo=",
+      "endpoints": [
+        "https://dev-workpulse-api.baseel.com/api/v1/agent/update/{{target}}/{{arch}}/{{current_version}}"
+      ]
+    }
   }
 }

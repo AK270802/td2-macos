@@ -1,7 +1,11 @@
-﻿pub mod api;
+pub mod api;
 pub mod auth;
 pub mod capture;
 pub mod db;
 pub mod idle;
+pub mod ipc_transport;
+pub mod logging;
 pub mod models;
+pub mod platform;
+pub mod timer_service;
 pub mod timer_state;

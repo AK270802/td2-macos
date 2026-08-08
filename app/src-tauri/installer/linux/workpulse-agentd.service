@@ -1,0 +1,16 @@
+# WorkPulse background agent — systemd user unit.
+# Runs in the user session (screen/window capture is not possible from a
+# system daemon). Enable with:  systemctl --user enable --now workpulse-agentd
+
+[Unit]
+Description=WorkPulse activity agent
+After=graphical-session.target
+
+[Service]
+ExecStart=/usr/bin/workpulse-agentd debug
+Restart=on-failure
+RestartSec=10
+Environment=RUST_LOG=info
+
+[Install]
+WantedBy=default.target

@@ -51,11 +51,7 @@ pub async fn refresh(client: &Client) -> Result<String> {
     let body: LoginResponse = res.json().await?;
     let new_token = body.access_token.or(body.token)
         .ok_or_else(|| anyhow!("No token in refresh response"))?;
-    // Update stored access token
-    if let Some(rt) = body.refresh_token {
-        let _ = keyring::Entry::new("WorkPulse", "agent_refresh_token").map(|e| e.set_password(&rt));
-    }
-    let _ = keyring::Entry::new("WorkPulse", "agent_token").map(|e| e.set_password(&new_token));
+    session_store::save_tokens(&new_token, body.refresh_token.as_deref())?;
     Ok(new_token)
 }
 

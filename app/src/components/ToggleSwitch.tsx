@@ -10,8 +10,8 @@ export default function ToggleSwitch({ checked, onChange, disabled }: Props) {
                 disabled={disabled}
                 style={{ opacity: 0, width: 0, height: 0, position: "absolute" }}
             />
-            <span style={{ position: "absolute", inset: 0, background: checked ? "var(--brass)" : "var(--line)", borderRadius: 20, transition: "background .15s" }} />
-            <span style={{ position: "absolute", top: 2, left: checked ? 19 : 2, width: 17, height: 17, borderRadius: "50%", background: "#fff", boxShadow: "0 1px 3px rgba(0,0,0,.3)", transition: "left .15s" }} />
+            <span style={{ position: "absolute", inset: 0, background: checked ? "var(--gold)" : "var(--line-strong)", borderRadius: 20, transition: "background .15s" }} />
+            <span style={{ position: "absolute", top: 2, left: checked ? 19 : 2, width: 17, height: 17, borderRadius: "50%", background: checked ? "#16110a" : "var(--text-2)", transition: "left .15s, background .15s" }} />
         </label>
     );
 }

@@ -1,4 +1,4 @@
-﻿use chrono::{DateTime, Utc};
+use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
@@ -48,6 +48,13 @@ pub struct TaskTimeLog {
     pub started_at: i64,
     pub ended_at: i64,
     pub duration_sec: i64,
+    #[serde(default)]
+    pub idle_sec: i64,
+    #[serde(default)]
+    pub break_sec: i64,
+    #[serde(default)]
+    pub meeting_sec: i64,
+    #[serde(skip_serializing, default)]
     pub synced: bool,
 }
 
@@ -94,5 +101,6 @@ impl Default for AgentConfig {
 pub struct TimeStats {
     pub worked_today_sec: i64,
     pub worked_week_sec: i64,
+    pub worked_month_sec: i64,
     pub sessions_today: i32,
 }

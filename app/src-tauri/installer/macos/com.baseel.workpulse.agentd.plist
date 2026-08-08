@@ -1,0 +1,29 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- WorkPulse background agent — per-user LaunchAgent.
+     Install to ~/Library/LaunchAgents/ and load with:
+       launchctl load -w ~/Library/LaunchAgents/com.baseel.workpulse.agentd.plist
+     Must run in the user session: Screen Recording and Accessibility
+     permissions are per-user and unavailable to system daemons. -->
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.baseel.workpulse.agentd</string>
+    <key>ProgramArguments</key>
+    <array>
+        <string>/Applications/WorkPulse.app/Contents/MacOS/agentd</string>
+        <string>debug</string>
+    </array>
+    <key>RunAtLoad</key>
+    <true/>
+    <key>KeepAlive</key>
+    <dict>
+        <key>SuccessfulExit</key>
+        <false/>
+    </dict>
+    <key>StandardOutPath</key>
+    <string>/tmp/workpulse-agentd.log</string>
+    <key>StandardErrorPath</key>
+    <string>/tmp/workpulse-agentd.err</string>
+</dict>
+</plist>

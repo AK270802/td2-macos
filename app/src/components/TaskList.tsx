@@ -1,111 +1,114 @@
-import { useMemo } from "react";
+import { useEffect, useState } from "react";
 import type { Task } from "../pages/Main";
+import { formatHMS, taskCode } from "../lib/format";
 
 interface Props {
     tasks: Task[];
-    onSelectTask: (task_id: string, project_id: string, task_name: string, project_name: string) => void;
+    taskTimes: Record<string, number>;
+    /** Date.now() when `taskTimes` was fetched — lets the tracking row tick
+     * live between polls instead of only jumping every 30s. */
+    taskTimesFetchedAt: number;
+    onSelectTask: (t: Task) => void;
     activeTaskId: string | null;
-    activeProject: string | null;
+    isRunning: boolean;
+    onSwitcher: () => void;
 }
 
-export default function TaskList({ tasks, onSelectTask, activeTaskId, activeProject }: Props) {
-    const grouped = useMemo(() => {
-        const map = new Map<string, Task[]>();
-        tasks.forEach(t => {
-            const bucket = map.get(t.project_name) ?? [];
-            bucket.push(t);
-            map.set(t.project_name, bucket);
-        });
-        return map;
-    }, [tasks]);
+export default function TaskList({ tasks, taskTimes, taskTimesFetchedAt, onSelectTask, activeTaskId, isRunning, onSwitcher }: Props) {
+    // Re-render every second while a task is actively tracking so its row
+    // ticks like the hero timer, instead of only updating on each 30s poll.
+    const [, forceTick] = useState(0);
+    useEffect(() => {
+        if (!isRunning || !activeTaskId) return;
+        const id = setInterval(() => forceTick(x => x + 1), 1000);
+        return () => clearInterval(id);
+    }, [isRunning, activeTaskId]);
 
-    const projectNames = Array.from(grouped.keys());
-    const displayProject = activeProject ?? (projectNames[0] ?? null);
-    const visibleTasks = displayProject ? (grouped.get(displayProject) ?? []) : [];
+    const liveSeconds = (taskId: string, tracking: boolean) => {
+        const baseline = taskTimes[taskId] ?? 0;
+        if (!tracking) return baseline;
+        return baseline + Math.floor((Date.now() - taskTimesFetchedAt) / 1000);
+    };
 
     return (
-        <div style={{
-            background: "var(--surface)", border: "1px solid var(--line)",
-            borderRadius: "var(--radius)", marginBottom: 16, overflow: "hidden",
-            boxShadow: "var(--shadow-sm)",
-        }}>
-            {/* Card header */}
+        <div className="wp-card" style={{ marginBottom: 14, overflow: "hidden" }}>
             <div style={{
                 display: "flex", alignItems: "center", justifyContent: "space-between",
-                padding: "12px 16px", borderBottom: "1px solid var(--line-soft)",
+                padding: "16px 20px 12px",
             }}>
-                <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                    <span style={{ fontSize: 13, fontWeight: 700, color: "var(--ink)" }}>
-                        {displayProject ?? "Tasks"}
+                <span className="wp-overline">Assigned tasks</span>
+                <button
+                    onClick={onSwitcher}
+                    className="wp-btn-ghost"
+                    style={{ display: "flex", alignItems: "center", gap: 8, padding: "6px 12px", borderRadius: 8, fontSize: 12 }}>
+                    Switch task
+                    <span className="wp-mono" style={{
+                        fontSize: 10, border: "1px solid var(--line-strong)", borderRadius: 4,
+                        padding: "2px 5px", color: "var(--text-3)",
+                    }}>
+                        ⌘K
                     </span>
-                    {visibleTasks.length > 0 && (
-                        <span style={{
-                            fontSize: 11, fontWeight: 600, color: "var(--ink-faint)",
-                            background: "var(--surface-2)", border: "1px solid var(--line)",
-                            borderRadius: 20, padding: "1px 7px",
-                        }}>
-                            {visibleTasks.length}
-                        </span>
-                    )}
-                </div>
-                <button style={{ fontSize: 12, fontWeight: 600, color: "var(--link)", background: "none", border: "none", cursor: "pointer", padding: 0 }}>
-                    + New task
                 </button>
             </div>
 
-            {/* Task rows */}
-            {visibleTasks.length === 0 ? (
-                <div style={{ padding: "20px 16px", color: "var(--ink-faint)", fontSize: 13, textAlign: "center" }}>
-                    {tasks.length === 0 ? "Waiting for agent sync…" : "No tasks in this project"}
+            {tasks.length === 0 ? (
+                <div style={{ padding: "26px 20px 30px", textAlign: "center", color: "var(--text-3)", fontSize: 13 }}>
+                    No tasks assigned yet — they appear here when your manager assigns them.
                 </div>
             ) : (
-                visibleTasks.map(t => {
-                    const isActive = t.task_id === activeTaskId;
+                tasks.map(t => {
+                    const active = t.task_id === activeTaskId;
+                    const tracking = active && isRunning;
                     return (
-                        <div
+                        <button
                             key={t.task_id}
+                            onClick={() => onSelectTask(t)}
+                            className="wp-row-hover"
                             style={{
-                                display: "flex", alignItems: "center", gap: 12,
-                                padding: "10px 16px",
-                                background: isActive ? "var(--brass-soft)" : "transparent",
-                                borderBottom: "1px solid var(--line-soft)",
-                                transition: "background 0.1s",
+                                display: "flex", alignItems: "center", gap: 16,
+                                width: "100%", textAlign: "left",
+                                padding: "13px 20px",
+                                border: "none", borderTop: "1px solid var(--line)",
+                                background: active ? "var(--panel-2)" : "transparent",
+                                boxShadow: tracking ? "inset 3px 0 0 var(--gold)" : "none",
                             }}>
+                            {/* Play / pause dot button */}
                             <span style={{
-                                width: 8, height: 8, borderRadius: "50%", flexShrink: 0,
-                                background: isActive ? "var(--brass-ink)" : "transparent",
-                                border: isActive ? "none" : "1.5px solid var(--line)",
-                            }} />
-                            <span style={{
-                                flex: 1, fontSize: 13,
-                                fontWeight: isActive ? 700 : 500,
-                                color: isActive ? "var(--brass-ink)" : "var(--ink)",
-                                minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap",
+                                width: 32, height: 32, borderRadius: "50%", flexShrink: 0,
+                                border: `1px solid ${tracking ? "var(--gold-line)" : "var(--line-strong)"}`,
+                                background: tracking ? "var(--gold)" : "transparent",
+                                color: tracking ? "#16110a" : "var(--text-3)",
+                                display: "flex", alignItems: "center", justifyContent: "center",
                             }}>
-                                {t.task_name}
+                                {tracking
+                                    ? <svg width="11" height="11" viewBox="0 0 24 24" fill="currentColor"><path d="M7 5h3.4v14H7zM13.6 5H17v14h-3.6z" /></svg>
+                                    : <svg width="11" height="11" viewBox="0 0 24 24" fill="currentColor"><path d="M8 5v14l11-7z" /></svg>}
                             </span>
-                            <span style={{
-                                fontSize: 12, color: "var(--ink-faint)",
-                                fontFamily: "'Space Grotesk', monospace",
-                                flexShrink: 0, marginRight: 8,
-                            }}>
-                                {isActive ? "" : "0:00"}
+
+                            <span className="wp-mono" style={{ fontSize: 11, color: "var(--text-3)", letterSpacing: "0.08em", flex: "0 0 64px" }}>
+                                {taskCode(t.project_name, t.task_id)}
                             </span>
-                            <button
-                                onClick={() => onSelectTask(t.task_id, t.project_id, t.task_name, t.project_name)}
-                                style={{
-                                    width: 28, height: 28, borderRadius: "50%",
-                                    border: "1.5px solid var(--line)",
-                                    background: isActive ? "var(--brass)" : "transparent",
-                                    color: isActive ? "#fff" : "var(--ink-soft)",
-                                    display: "flex", alignItems: "center", justifyContent: "center",
-                                    cursor: "pointer", flexShrink: 0, transition: "all 0.15s",
-                                }}>
-                                <svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor">
-                                    <path d="M8 5v14l11-7z" />
-                                </svg>
-                            </button>
-                        </div>
+
+                            <span style={{ flex: 1, minWidth: 0 }}>
+                                <span style={{ display: "block", fontSize: 13.5, fontWeight: 500, color: "var(--text-1)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                                    {t.task_name}
+                                </span>
+                                <span style={{ display: "block", fontSize: 11.5, color: "var(--text-3)", marginTop: 2 }}>
+                                    {t.project_name}
+                                </span>
+                            </span>
+
+                            <span className="wp-mono" style={{
+                                fontSize: 13, flexShrink: 0,
+                                color: tracking ? "var(--gold-2)" : "var(--text-2)",
+                            }}>
+                                {formatHMS(liveSeconds(t.task_id, tracking))}
+                            </span>
+
+                            <span className={`wp-chip ${tracking ? "wp-chip--tracking" : ""}`} style={{ flexShrink: 0 }}>
+                                {tracking ? "Tracking" : "Idle"}
+                            </span>
+                        </button>
                     );
                 })
             )}

@@ -1,33 +1,239 @@
+/* WorkPulse Agent — "Instrument" design system. Dark is the default and
+   primary surface; :root[data-theme="light"] below overrides the same
+   variable set for the light variant. Every component reads colour only
+   through these variables, so the two themes stay in lockstep by
+   construction — there is nothing to keep in sync per-component.
+   Fonts: Fraunces (display serif), JetBrains Mono (numerics/labels),
+   Public Sans (UI). */
+
+@import url("https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,300;400;500;600&family=Fraunces:ital,opsz,wght@1,9..144,300;1,9..144,400;1,9..144,500;1,9..144,600&family=JetBrains+Mono:wght@400;500;700&family=Public+Sans:wght@300;400;500;600&display=swap");
+
 :root {
-  --ink: #11131a; --ink-soft: #5c6270; --ink-faint: #9196a3;
-  --bg: #eef1f6; --surface: #ffffff; --surface-2: #f5f7fb;
-  --line: #dde1ea; --line-soft: #e8ebf1;
-  --navy: #1c2336; --navy-2: #262f4a; --link: #33437a;
-  --brass: #c9974b; --brass-2: #e3bd82; --brass-soft: #f8efdc; --brass-ink: #8a651f;
-  --clay: #a85a32; --clay-soft: #f7e6da;
-  --alert: #c0392b;
-  --mint: #0eaf8c; --mint-soft: #def7f0;
-  --amber: #f5a623; --amber-soft: #fdf0dc; --amber-ink: #9a6308;
-  --sb-bg: #161a26; --sb-bg-2: #1d2333; --sb-text: #9aa0b8; --sb-line: #262d40;
-  --radius: 14px; --radius-lg: 20px;
-  --shadow-sm: 0 1px 2px rgba(17,19,26,.05);
-  --shadow: 0 10px 30px -14px rgba(17,19,26,.18);
-  --sidebar-w: 230px; --title-bar-h: 42px; --status-bar-h: 30px;
+  /* Type */
+  --wp-font-display: "Fraunces", ui-serif, Georgia, serif;
+  --wp-font-mono: "JetBrains Mono", ui-monospace, SFMono-Regular, monospace;
+  --wp-font-ui: "Public Sans", ui-sans-serif, system-ui, sans-serif;
+
+  /* Surfaces */
+  --bg: #080c18;
+  --bg-2: #0a0f1f;            /* sidebar / right login panel */
+  --panel: #0f1528;           /* resting card */
+  --panel-2: #131b31;         /* elevated card */
+  --panel-3: #1a2440;         /* active / hover */
+  --line: rgba(240, 244, 255, 0.08);
+  --line-strong: rgba(240, 244, 255, 0.14);
+
+  /* Ink */
+  --text-1: #f0f4ff;
+  --text-2: rgba(240, 244, 255, 0.65);
+  --text-3: rgba(240, 244, 255, 0.4);
+
+  /* Accents */
+  --gold: #c9913e;
+  --gold-2: #d8a458;
+  --gold-soft: rgba(201, 145, 62, 0.14);
+  --gold-line: rgba(201, 145, 62, 0.45);
+  --emerald: #3ecf8e;
+  --emerald-soft: rgba(62, 207, 142, 0.12);
+  --coral: #e06b4d;
+  --coral-2: #e88a70;
+  --coral-ink: #23140f;
+  --coral-soft: rgba(224, 107, 77, 0.14);
+  --sky: #38bdf8;
+  --red: #f87171;
+  --red-soft: rgba(248, 113, 113, 0.12);
+
+  /* Geometry */
+  --radius-sm: 8px;
+  --radius: 12px;
+  --radius-lg: 18px;
+  --sidebar-w: 224px;
+  --title-bar-h: 44px;
+  --status-bar-h: 32px;
+  --shadow: 0 24px 60px -24px rgba(0, 0, 0, 0.7);
 }
-[data-theme="dark"] {
-  --ink: #edeff5; --ink-soft: #9aa0b4; --ink-faint: #6a6f82;
-  --bg: #0e0f14; --surface: #161821; --surface-2: #1c1f2a;
-  --line: #262a36; --line-soft: #20232e;
-  --shadow: 0 10px 30px -14px rgba(0,0,0,.6);
+
+:root[data-theme="light"] {
+  /* Surfaces */
+  --bg: #f3f4f8;
+  --bg-2: #eceef4;            /* sidebar / right login panel */
+  --panel: #ffffff;           /* resting card */
+  --panel-2: #ffffff;         /* elevated card */
+  --panel-3: #edf0f7;         /* active / hover */
+  --line: rgba(15, 23, 42, 0.08);
+  --line-strong: rgba(15, 23, 42, 0.14);
+
+  /* Ink */
+  --text-1: #10141f;
+  --text-2: rgba(16, 20, 31, 0.66);
+  --text-3: rgba(16, 20, 31, 0.42);
+
+  /* Accent hues stay the same across themes — they're saturated enough to
+     read on both white and near-black; only their "soft" backing tints
+     need to lighten so they don't muddy against a white panel. */
+  --gold-soft: rgba(201, 145, 62, 0.12);
+  --emerald-soft: rgba(62, 207, 142, 0.14);
+  --coral-soft: rgba(224, 107, 77, 0.14);
+  --red-soft: rgba(248, 113, 113, 0.14);
+
+  --shadow: 0 24px 60px -24px rgba(15, 23, 42, 0.22);
 }
+
+/* Scoped override, NOT tied to :root — for surfaces (the login screen's
+   "Instrument" branding panel) that are always the dark navy brand panel by
+   design, regardless of the app-wide theme. Applying `data-theme-scope="dark"`
+   to an element re-pins these variables for it and its descendants, winning
+   over whatever :root[data-theme="light"] set, since CSS custom properties
+   resolve from the nearest ancestor. Without this, light theme's --text-1
+   (near-black) rendered on this permanently-dark panel and made the text
+   unreadable. */
+[data-theme-scope="dark"] {
+  --bg: #080c18;
+  --bg-2: #0a0f1f;
+  --panel: #0f1528;
+  --panel-2: #131b31;
+  --panel-3: #1a2440;
+  --line: rgba(240, 244, 255, 0.08);
+  --line-strong: rgba(240, 244, 255, 0.14);
+  --text-1: #f0f4ff;
+  --text-2: rgba(240, 244, 255, 0.65);
+  --text-3: rgba(240, 244, 255, 0.4);
+  --gold-soft: rgba(201, 145, 62, 0.14);
+  --emerald-soft: rgba(62, 207, 142, 0.12);
+  --coral-soft: rgba(224, 107, 77, 0.14);
+  --red-soft: rgba(248, 113, 113, 0.12);
+}
+
 * { box-sizing: border-box; }
 html, body { margin: 0; padding: 0; height: 100%; }
-body { font-family: 'Inter', 'Segoe UI', system-ui, sans-serif; -webkit-font-smoothing: antialiased; color: var(--ink); background: var(--bg); }
+body {
+  font-family: var(--wp-font-ui);
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  color: var(--text-1);
+  background: var(--bg);
+  font-size: 14px;
+}
 button { font-family: inherit; cursor: pointer; }
 input { font-family: inherit; }
-::-webkit-scrollbar { width: 8px; }
-::-webkit-scrollbar-thumb { background: var(--line); border-radius: 5px; }
-@keyframes hpulse {
-  0% { transform: scale(.6); opacity: .6; }
-  100% { transform: scale(2.2); opacity: 0; }
+::-webkit-scrollbar { width: 8px; height: 8px; }
+::-webkit-scrollbar-thumb { background: var(--line-strong); border-radius: 5px; }
+::-webkit-scrollbar-track { background: transparent; }
+::selection { background: var(--gold-soft); }
+
+/* ── Type utilities ─────────────────────────────────────────────────────── */
+
+/* Overline label: mono, uppercase, tracked, with the short rule above */
+.wp-overline {
+  display: inline-block;
+  font-family: var(--wp-font-mono);
+  font-size: 10px;
+  font-weight: 500;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  color: var(--text-3);
+  border-top: 1px solid var(--line-strong);
+  padding-top: 5px;
 }
+.wp-overline--gold { color: var(--gold); border-top-color: var(--gold-line); }
+.wp-overline--red { color: var(--red); border-top-color: rgba(248, 113, 113, 0.45); }
+.wp-overline--coral { color: var(--coral-2); border-top-color: rgba(224, 107, 77, 0.5); }
+.wp-overline--emerald { color: var(--emerald); border-top-color: rgba(62, 207, 142, 0.45); }
+
+/* Precision numerics — no horizontal jitter as digits change */
+.wp-mono {
+  font-family: var(--wp-font-mono);
+  font-variant-numeric: tabular-nums;
+  font-feature-settings: "tnum" 1, "ss01" 1;
+}
+
+.wp-display { font-family: var(--wp-font-display); }
+
+/* ── Controls ───────────────────────────────────────────────────────────── */
+
+.wp-btn-gold {
+  background: var(--gold);
+  color: #16110a;
+  border: none;
+  border-radius: 10px;
+  font-weight: 600;
+  font-size: 14px;
+  transition: background 0.15s ease;
+}
+.wp-btn-gold:hover { background: var(--gold-2); }
+.wp-btn-gold:disabled { background: rgba(201, 145, 62, 0.4); cursor: not-allowed; }
+
+.wp-btn-ghost {
+  background: transparent;
+  color: var(--text-2);
+  border: 1px solid var(--line-strong);
+  border-radius: 10px;
+  font-weight: 500;
+  font-size: 13px;
+  transition: border-color 0.15s ease, color 0.15s ease;
+}
+.wp-btn-ghost:hover { border-color: var(--text-3); color: var(--text-1); }
+
+.wp-input {
+  width: 100%;
+  background: var(--panel);
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius);
+  color: var(--text-1);
+  font-size: 14px;
+  padding: 13px 16px;
+  outline: none;
+  font-family: var(--wp-font-mono);
+  transition: border-color 0.15s ease, box-shadow 0.15s ease;
+}
+.wp-input:focus {
+  border-color: var(--gold-line);
+  box-shadow: 0 0 0 3px rgba(201, 145, 62, 0.12);
+}
+.wp-input::placeholder { color: var(--text-3); }
+
+.wp-card {
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-lg);
+}
+
+/* Status chip (IDLE / TRACKING) */
+.wp-chip {
+  font-family: var(--wp-font-mono);
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  padding: 4px 8px 3px;
+  border-radius: 4px;
+  border: 1px solid var(--line-strong);
+  color: var(--text-3);
+}
+.wp-chip--tracking {
+  color: var(--gold);
+  border-color: var(--gold-line);
+  background: var(--gold-soft);
+}
+.wp-chip--break {
+  color: var(--coral-2);
+  border-color: rgba(224, 107, 77, 0.5);
+  background: var(--coral-soft);
+}
+
+/* ── Animation ──────────────────────────────────────────────────────────── */
+
+@keyframes wp-pulse {
+  0% { transform: scale(0.6); opacity: 0.6; }
+  100% { transform: scale(2.4); opacity: 0; }
+}
+@keyframes wp-toast-in {
+  from { transform: translateY(12px); opacity: 0; }
+  to { transform: translateY(0); opacity: 1; }
+}
+@keyframes wp-fade-in {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+.wp-row-hover { transition: background 0.12s ease; }
+.wp-row-hover:hover { background: var(--panel-2); }

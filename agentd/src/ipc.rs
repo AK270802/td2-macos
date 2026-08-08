@@ -1,117 +1,65 @@
-//! Named pipe IPC server — concurrent, one spawn per connection.
-//! JSON protocol: {cmd, payload} → {ok, data, error}
+//! IPC server — cross-platform local socket (named pipe on Windows, Unix
+//! socket elsewhere) via common::ipc_transport. One spawn per connection.
+//!
+//! The timer is a `common::timer_service::TimerService` wrapping the tested
+//! `TimerState` machine — the exact logic covered by timer_state_tests.rs is
+//! what runs in production.
 
-use serde::{Deserialize, Serialize};
+use common::db::{self, queries};
+use common::ipc_transport::{self, IpcRequest, IpcResponse};
+use interprocess::local_socket::traits::tokio::{Listener as _, Stream as _};
+use common::models::{ActivityEvent, Task};
+use common::timer_service::TimerService;
+use common::timer_state::{BreakKind, TimerState};
 use std::sync::{Mutex, OnceLock};
-use std::time::{Duration, Instant};
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tracing::{error, info};
+use uuid::Uuid;
 
-const PIPE_NAME: &str = r"\\.\pipe\workpulse-agent";
+static TIMER: OnceLock<Mutex<TimerService>> = OnceLock::new();
 
-// ── Shared timer state ────────────────────────────────────────────────────────
-
-pub struct TimerInner {
-    pub state: &'static str, // "idle" | "running" | "paused" | "on_break"
-    pub task_id: Option<String>,
-    pub project_id: Option<String>,
-    pub task_name: Option<String>,
-    pub project_name: Option<String>,
-    pub started_at: Option<Instant>,
-    pub accumulated: u64,
-    pub break_type: Option<String>,
-    pub break_started_at: Option<Instant>,
-    pub break_duration_secs: u64,
+pub fn timer() -> &'static Mutex<TimerService> {
+    TIMER.get_or_init(|| Mutex::new(TimerService::new()))
 }
 
-static TIMER: OnceLock<Mutex<TimerInner>> = OnceLock::new();
-
-pub fn timer() -> &'static Mutex<TimerInner> {
-    TIMER.get_or_init(|| {
-        Mutex::new(TimerInner {
-            state: "idle",
-            task_id: None,
-            project_id: None,
-            task_name: None,
-            project_name: None,
-            started_at: None,
-            accumulated: 0,
-            break_type: None,
-            break_started_at: None,
-            break_duration_secs: 0,
-        })
-    })
+/// Task id currently being tracked (used by sync_loop's prune guard).
+pub fn active_task_id() -> Option<Uuid> {
+    timer().lock().ok()?.state().active_task().map(|t| t.task_id)
 }
 
-fn elapsed_secs(t: &TimerInner) -> u64 {
-    let live = match t.started_at {
-        Some(s) if t.state == "running" => s.elapsed().as_secs(),
-        _ => 0,
-    };
-    t.accumulated + live
-}
-
-fn break_remaining(t: &TimerInner) -> Option<u64> {
-    if t.state != "on_break" { return None; }
-    let used = t.break_started_at.map(|s| s.elapsed().as_secs()).unwrap_or(0);
-    Some(t.break_duration_secs.saturating_sub(used))
-}
-
-/// Called by capture_loop when sleep is detected — pauses running timer.
+/// Called by capture_loop when a sleep gap is detected.
 pub fn pause_for_sleep() {
-    let mut t = timer().lock().unwrap();
-    if t.state == "running" {
-        t.accumulated = elapsed_secs(&t);
-        t.started_at = None;
-        t.state = "paused";
-        info!("Timer paused: system sleep detected");
-    }
-}
-
-// ── Wire types ────────────────────────────────────────────────────────────────
-
-#[derive(Deserialize)]
-struct IpcRequest {
-    cmd: String,
-    payload: Option<serde_json::Value>,
-}
-
-#[derive(Serialize)]
-struct IpcResponse {
-    ok: bool,
-    data: serde_json::Value,
-    error: Option<String>,
-}
-
-// ── Server — one spawn per connection ────────────────────────────────────────
-
-pub async fn run_ipc_server() {
-    info!("IPC server starting on {PIPE_NAME}");
-    #[cfg(windows)]
-    loop {
-        use tokio::net::windows::named_pipe::ServerOptions;
-        let server = match ServerOptions::new().first_pipe_instance(false).create(PIPE_NAME) {
-            Ok(s) => s,
-            Err(e) => {
-                error!("pipe create: {e}");
-                tokio::time::sleep(Duration::from_millis(100)).await;
-                continue;
-            }
-        };
-        match server.connect().await {
-            Ok(_) => { tokio::spawn(serve_conn(server)); }
-            Err(e) => error!("pipe connect: {e}"),
+    if let Ok(conn) = db::open() {
+        if let Ok(mut t) = timer().lock() {
+            t.pause_for_sleep(&conn);
         }
     }
-    #[cfg(not(windows))]
+}
+
+// ── Server ────────────────────────────────────────────────────────────────────
+
+pub async fn run_ipc_server() {
+    info!("IPC server starting");
+    let listener = match ipc_transport::bind_listener() {
+        Ok(l) => l,
+        Err(e) => {
+            error!("IPC bind failed (is another agentd running?): {e}");
+            return;
+        }
+    };
     loop {
-        tokio::time::sleep(Duration::from_secs(60)).await;
+        match listener.accept().await {
+            Ok(conn) => { tokio::spawn(serve_conn(conn)); }
+            Err(e) => {
+                error!("IPC accept: {e}");
+                tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+            }
+        }
     }
 }
 
-#[cfg(windows)]
-async fn serve_conn(server: tokio::net::windows::named_pipe::NamedPipeServer) {
-    let (reader, mut writer) = tokio::io::split(server);
+async fn serve_conn(conn: interprocess::local_socket::tokio::Stream) {
+    let (reader, mut writer) = conn.split();
     let mut lines = BufReader::new(reader).lines();
     while let Ok(Some(line)) = lines.next_line().await {
         let resp = handle_request(&line).await;
@@ -127,146 +75,211 @@ async fn serve_conn(server: tokio::net::windows::named_pipe::NamedPipeServer) {
 async fn handle_request(line: &str) -> IpcResponse {
     let req: IpcRequest = match serde_json::from_str(line) {
         Ok(r) => r,
-        Err(e) => return err_resp(e.to_string()),
+        Err(e) => return IpcResponse::err(e.to_string()),
     };
     match req.cmd.as_str() {
-        "ping" => ok_resp(serde_json::json!("pong")),
-
-        "get_state" => {
-            let t = timer().lock().unwrap();
-            let task = t.task_id.as_ref().map(|id| serde_json::json!({
-                "task_id": id,
-                "task_name": t.task_name,
-                "project_name": t.project_name,
-            }));
-            ok_resp(serde_json::json!({
-                "state": t.state,
-                "task": task,
-                "elapsed_secs": elapsed_secs(&t),
-                "break_type": t.break_type,
-                "break_remaining_secs": break_remaining(&t),
+        "ping" => IpcResponse::ok(serde_json::json!("pong")),
+        "get_state" => get_state(),
+        "toggle_play_pause" => with_conn(|conn| {
+            timer().lock().unwrap().resume_last_task(conn);
+            Ok(serde_json::json!({"ok": true}))
+        }),
+        "select_task" => select_task(req.payload),
+        "start_break" => start_break(req.payload),
+        "stop_tracking" => with_conn(|conn| {
+            timer().lock().unwrap().stop(conn);
+            Ok(serde_json::json!({"ok": true}))
+        }),
+        "idle_keep_working" => idle_response(false),
+        "idle_auto_stop" => idle_response(true),
+        "get_assigned_tasks" => with_conn(|conn| {
+            let tasks = queries::get_assigned_tasks(conn)?;
+            Ok(serde_json::to_value(&tasks)?)
+        }),
+        "get_time_stats" => with_conn(|conn| {
+            let (today, week, month, sessions, meeting_today) = queries::get_time_stats_local(conn)?;
+            // Add the current in-progress session's not-yet-flushed meeting
+            // seconds so the KPI updates live rather than waiting for the
+            // next ~5-minute flush_active() cycle to persist it.
+            let live_meeting = timer().lock().map(|t| t.meeting_secs() as i64).unwrap_or(0);
+            Ok(serde_json::json!({
+                "worked_today_sec": today,
+                "worked_week_sec": week,
+                "worked_month_sec": month,
+                "sessions_today": sessions,
+                "meeting_today_sec": meeting_today + live_meeting,
             }))
+        }),
+        "get_task_times_today" => with_conn(|conn| {
+            let rows = queries::get_task_times_today(conn)?;
+            Ok(serde_json::to_value(rows.into_iter().collect::<std::collections::HashMap<_,_>>())?)
+        }),
+        "get_recent_events" => {
+            let limit = req.payload.as_ref()
+                .and_then(|p| p["limit"].as_u64()).unwrap_or(12) as usize;
+            with_conn(move |conn| {
+                let events = queries::get_recent_events(conn, limit)?;
+                Ok(serde_json::to_value(&events)?)
+            })
         }
-
-        "toggle_play_pause" => {
-            let mut t = timer().lock().unwrap();
-            match t.state {
-                "running" => {
-                    t.accumulated = elapsed_secs(&t);
-                    t.started_at = None;
-                    t.state = "paused";
-                }
-                "paused" | "on_break" => {
-                    t.started_at = Some(Instant::now());
-                    t.break_type = None;
-                    t.break_started_at = None;
-                    t.state = "running";
-                }
-                "idle" => {
-                    // Resume last task from DB if available
-                    drop(t);
-                    if let Ok(conn) = common::db::open() {
-                        if let Some(task_id) = common::db::queries::get_config(&conn, "last_task_id") {
-                            let project_id = common::db::queries::get_config(&conn, "last_project_id").unwrap_or_default();
-                            let task_name = common::db::queries::get_config(&conn, "last_task_name").unwrap_or_default();
-                            let project_name = common::db::queries::get_config(&conn, "last_project_name").unwrap_or_default();
-                            let mut t2 = timer().lock().unwrap();
-                            t2.task_id = Some(task_id);
-                            t2.project_id = Some(project_id);
-                            t2.task_name = Some(task_name);
-                            t2.project_name = Some(project_name);
-                            t2.accumulated = 0;
-                            t2.started_at = Some(Instant::now());
-                            t2.break_type = None;
-                            t2.state = "running";
-                        }
-                    }
-                }
-                _ => {}
-            }
-            ok_resp(serde_json::json!({"ok": true}))
-        }
-
-        "select_task" => {
-            let payload = req.payload.unwrap_or_default();
-            let task_id = payload["task_id"].as_str().map(String::from);
-            let project_id = payload["project_id"].as_str().map(String::from);
-            let task_name = payload["task_name"].as_str().map(String::from);
-            let project_name = payload["project_name"].as_str().map(String::from);
-
-            // Persist as last-used task for hero play resume
-            if let (Some(ref tid), Some(ref pid), Some(ref tn), Some(ref pn)) =
-                (&task_id, &project_id, &task_name, &project_name)
-            {
-                if let Ok(conn) = common::db::open() {
-                    let _ = common::db::queries::set_config(&conn, "last_task_id", tid);
-                    let _ = common::db::queries::set_config(&conn, "last_project_id", pid);
-                    let _ = common::db::queries::set_config(&conn, "last_task_name", tn);
-                    let _ = common::db::queries::set_config(&conn, "last_project_name", pn);
-                }
-            }
-
-            let mut t = timer().lock().unwrap();
-            if t.state == "running" {
-                t.accumulated = elapsed_secs(&t);
-            }
-            t.task_id = task_id;
-            t.project_id = project_id;
-            t.task_name = task_name;
-            t.project_name = project_name;
-            t.accumulated = 0;
-            t.started_at = Some(Instant::now());
-            t.break_type = None;
-            t.break_started_at = None;
-            t.state = "running";
-            ok_resp(serde_json::json!({"ok": true}))
-        }
-
-        "start_break" => {
-            let payload = req.payload.unwrap_or_default();
-            let break_type = payload["break_type"].as_str().unwrap_or("short").to_string();
-            let duration_secs = payload["duration_secs"].as_u64().unwrap_or(600);
-            let mut t = timer().lock().unwrap();
-            if t.state == "running" {
-                t.accumulated = elapsed_secs(&t);
-                t.started_at = None;
-            }
-            t.break_type = Some(break_type);
-            t.break_started_at = Some(Instant::now());
-            t.break_duration_secs = duration_secs;
-            t.state = "on_break";
-            ok_resp(serde_json::json!({"ok": true}))
-        }
-
-        "get_assigned_tasks" => {
-            let result = common::db::open()
-                .and_then(|conn| common::db::queries::get_assigned_tasks(&conn));
-            match result {
-                Ok(tasks) => ok_resp(serde_json::to_value(&tasks).unwrap_or_default()),
-                Err(e) => err_resp(e.to_string()),
-            }
-        }
-
-        "get_time_stats" => {
-            let result = common::db::open()
-                .and_then(|conn| common::db::queries::get_time_stats_local(&conn));
-            match result {
-                Ok((today, week, sessions)) => ok_resp(serde_json::json!({
-                    "worked_today_sec": today,
-                    "worked_week_sec": week,
-                    "sessions_today": sessions,
-                })),
-                Err(e) => err_resp(e.to_string()),
-            }
-        }
-
-        _ => err_resp(format!("unknown command: {}", req.cmd)),
+        "get_sync_status" => IpcResponse::ok(crate::sync_loop::status_json()),
+        "sync_now" => sync_now().await,
+        "get_consent_status" => get_consent_status().await,
+        "accept_consent" => accept_consent(req.payload).await,
+        _ => IpcResponse::err(format!("unknown command: {}", req.cmd)),
     }
 }
 
-fn ok_resp(data: serde_json::Value) -> IpcResponse {
-    IpcResponse { ok: true, data, error: None }
+fn with_conn<F>(f: F) -> IpcResponse
+where F: FnOnce(&rusqlite::Connection) -> anyhow::Result<serde_json::Value> {
+    match db::open() {
+        Ok(conn) => match f(&conn) {
+            Ok(v) => IpcResponse::ok(v),
+            Err(e) => IpcResponse::err(e.to_string()),
+        },
+        Err(e) => IpcResponse::err(e.to_string()),
+    }
 }
-fn err_resp(msg: String) -> IpcResponse {
-    IpcResponse { ok: false, data: serde_json::Value::Null, error: Some(msg) }
+
+fn get_state() -> IpcResponse {
+    let t = timer().lock().unwrap();
+    let state = t.state();
+    let task = state.active_task().map(|task| serde_json::json!({
+        "task_id": task.task_id,
+        "project_id": task.project_id,
+        "task_name": task.task_name,
+        "project_name": task.project_name,
+    }));
+    let (break_type, break_remaining) = match state {
+        TimerState::OnBreak { kind, break_started, .. } => {
+            let used = break_started.elapsed().as_secs();
+            (Some(kind.display().to_string()),
+             Some(kind.duration_secs().saturating_sub(used)))
+        }
+        _ => (None, None),
+    };
+    IpcResponse::ok(serde_json::json!({
+        "state": state.state_name(),
+        "task": task,
+        "elapsed_secs": t.display_elapsed(),
+        "break_type": break_type,
+        "break_remaining_secs": break_remaining,
+        "idle_warning": t.idle_warning(),
+        "idle_since_secs": t.idle_since_secs(),
+        "in_meeting": crate::capture_loop::is_in_meeting(),
+    }))
+}
+
+fn select_task(payload: Option<serde_json::Value>) -> IpcResponse {
+    let p = payload.unwrap_or_default();
+    let task = (|| {
+        Some(Task {
+            task_id: p["task_id"].as_str()?.parse().ok()?,
+            project_id: p["project_id"].as_str()?.parse().ok()?,
+            task_name: p["task_name"].as_str()?.to_string(),
+            project_name: p["project_name"].as_str()?.to_string(),
+        })
+    })();
+    let Some(task) = task else {
+        return IpcResponse::err("select_task requires task_id, project_id, task_name, project_name");
+    };
+    with_conn(|conn| {
+        timer().lock().unwrap().select_task(conn, task);
+        Ok(serde_json::json!({"ok": true}))
+    })
+}
+
+fn start_break(payload: Option<serde_json::Value>) -> IpcResponse {
+    let p = payload.unwrap_or_default();
+    let kind = match p["break_type"].as_str().unwrap_or("coffee") {
+        "coffee" => BreakKind::Coffee,
+        "lunch" => BreakKind::Lunch,
+        other => BreakKind::Custom(
+            other.to_string(),
+            p["duration_secs"].as_u64().unwrap_or(600),
+        ),
+    };
+    with_conn(|conn| {
+        timer().lock().unwrap().start_break(conn, kind);
+        Ok(serde_json::json!({"ok": true}))
+    })
+}
+
+/// Shared idle-warning resolution. Records an `idle` activity event covering
+/// the span, then either keeps working (idle deducted) or stops back-dated.
+fn idle_response(auto_stop: bool) -> IpcResponse {
+    with_conn(|conn| {
+        let mut t = timer().lock().unwrap();
+        if let Some(w) = t.idle_warning() {
+            record_idle_event(conn, w.started_ts);
+        }
+        if auto_stop {
+            t.idle_auto_stop(conn);
+        } else {
+            t.idle_keep_working(conn);
+        }
+        Ok(serde_json::json!({"ok": true}))
+    })
+}
+
+fn record_idle_event(conn: &rusqlite::Connection, idle_start: i64) {
+    let (Some(user_id), Some(tenant_id)) = (
+        queries::get_config(conn, "user_id").and_then(|s| s.parse::<Uuid>().ok()),
+        queries::get_config(conn, "tenant_id").and_then(|s| s.parse::<Uuid>().ok()),
+    ) else { return };
+    let now = chrono::Utc::now().timestamp();
+    let ev = ActivityEvent {
+        event_uuid: Uuid::new_v4(),
+        user_id,
+        tenant_id,
+        event_type: "idle".into(),
+        ts: idle_start,
+        duration_sec: (now - idle_start).max(0),
+        payload: serde_json::json!({ "idle_start": idle_start, "idle_end": now }),
+    };
+    let _ = queries::insert_event(conn, &ev);
+}
+
+async fn sync_now() -> IpcResponse {
+    // Delegate to the sync loop's own thread — it already owns a `Connection`
+    // (which is `!Send` and can't be opened/awaited-across here, since this
+    // handler runs on the IPC server's multi-threaded runtime).
+    match crate::sync_loop::request_sync_now() {
+        Some(rx) => match rx.await {
+            Ok(Ok(())) => IpcResponse::ok(serde_json::json!({"ok": true})),
+            Ok(Err(e)) => IpcResponse::err(e),
+            Err(_) => IpcResponse::err("sync loop did not respond"),
+        },
+        None => IpcResponse::err("sync loop not ready yet"),
+    }
+}
+
+async fn get_consent_status() -> IpcResponse {
+    let client = match common::api::build_client() {
+        Ok(c) => c,
+        Err(e) => return IpcResponse::err(e.to_string()),
+    };
+    match common::api::consent::get_status(&client).await {
+        Ok(status) => IpcResponse::ok(serde_json::to_value(&status).unwrap_or_default()),
+        Err(e) => IpcResponse::err(e.to_string()),
+    }
+}
+
+async fn accept_consent(payload: Option<serde_json::Value>) -> IpcResponse {
+    let version = payload.as_ref()
+        .and_then(|p| p["policy_version"].as_i64())
+        .unwrap_or(1);
+    let client = match common::api::build_client() {
+        Ok(c) => c,
+        Err(e) => return IpcResponse::err(e.to_string()),
+    };
+    match common::api::consent::accept(&client, version).await {
+        Ok(()) => {
+            if let Ok(conn) = db::open() {
+                let _ = queries::set_config(&conn, "consent_accepted_version", &version.to_string());
+            }
+            IpcResponse::ok(serde_json::json!({"ok": true}))
+        }
+        Err(e) => IpcResponse::err(e.to_string()),
+    }
 }

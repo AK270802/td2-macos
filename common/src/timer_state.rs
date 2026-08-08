@@ -64,13 +64,26 @@ impl TimerState {
     pub fn select_task(self, new_task: Task) -> (TimerState, Vec<StateEvent>) {
         match self {
             TimerState::OnBreak { prev_task, prev_accumulated, .. } => {
-                // End break first, then handle as if we were in the post-break state
-                let post_break = match prev_task {
-                    Some(t) => TimerState::Running { task: t, started: Instant::now(), accumulated: prev_accumulated },
-                    None => TimerState::Idle,
-                };
-                post_break.select_task(new_task)
-                    .pipe_events(|mut e| { e.insert(0, StateEvent::BreakEnded); e })
+                // End the break, then resume/switch — clicking the pre-break
+                // task resumes it (never a pause double-toggle).
+                match prev_task {
+                    Some(t) if t.task_id == new_task.task_id => (
+                        TimerState::Running { task: t, started: Instant::now(), accumulated: prev_accumulated },
+                        vec![StateEvent::BreakEnded, StateEvent::TrackingResumed],
+                    ),
+                    Some(t) => (
+                        TimerState::Running { task: new_task.clone(), started: Instant::now(), accumulated: 0 },
+                        vec![
+                            StateEvent::BreakEnded,
+                            StateEvent::TaskStopped { task: t, duration_secs: prev_accumulated },
+                            StateEvent::TaskStarted { task: new_task },
+                        ],
+                    ),
+                    None => (
+                        TimerState::Running { task: new_task.clone(), started: Instant::now(), accumulated: 0 },
+                        vec![StateEvent::BreakEnded, StateEvent::TaskStarted { task: new_task }],
+                    ),
+                }
             }
             TimerState::Running { task: current, started, accumulated } => {
                 if current.task_id == new_task.task_id {
@@ -119,6 +132,27 @@ impl TimerState {
          vec![StateEvent::BreakStarted])
     }
 
+    /// Explicit stop from any state (idle auto-stop, task unassigned, quit).
+    pub fn stop(self) -> (TimerState, Vec<StateEvent>) {
+        match self {
+            TimerState::Idle => (TimerState::Idle, vec![]),
+            TimerState::Running { task, started, accumulated } => {
+                let total = accumulated + started.elapsed().as_secs();
+                (TimerState::Idle, vec![StateEvent::TaskStopped { task, duration_secs: total }])
+            }
+            TimerState::Paused { task, accumulated } => {
+                (TimerState::Idle, vec![StateEvent::TaskStopped { task, duration_secs: accumulated }])
+            }
+            TimerState::OnBreak { prev_task, prev_accumulated, .. } => {
+                let mut events = vec![StateEvent::BreakEnded];
+                if let Some(task) = prev_task {
+                    events.push(StateEvent::TaskStopped { task, duration_secs: prev_accumulated });
+                }
+                (TimerState::Idle, events)
+            }
+        }
+    }
+
     pub fn elapsed_secs(&self) -> u64 {
         match self {
             TimerState::Running { started, accumulated, .. } => accumulated + started.elapsed().as_secs(),
@@ -143,16 +177,6 @@ impl TimerState {
             TimerState::Paused { .. } => "paused",
             TimerState::OnBreak { .. } => "on_break",
         }
-    }
-}
-
-trait PipeEvents {
-    fn pipe_events<F: FnOnce(Vec<StateEvent>) -> Vec<StateEvent>>(self, f: F) -> Self;
-}
-
-impl PipeEvents for (TimerState, Vec<StateEvent>) {
-    fn pipe_events<F: FnOnce(Vec<StateEvent>) -> Vec<StateEvent>>(self, f: F) -> Self {
-        (self.0, f(self.1))
     }
 }
 

@@ -1,39 +1,82 @@
-﻿import { useEffect, useState } from "react";
+import React, { createContext, useContext, useState, useCallback, useEffect } from "react";
 
-export interface ToastMessage { id: string; message: string; type?: "info" | "warning" | "error"; }
-
-interface Props { toasts: ToastMessage[]; onRemove: (id: string) => void; }
-
-const DURATION = 2400;
-
-export default function ToastStack({ toasts, onRemove }: Props) {
-  return (
-    <div style={{ position: "fixed", bottom: 48, right: 20, display: "flex",
-      flexDirection: "column", gap: 8, zIndex: 9999, pointerEvents: "none" }}>
-      {toasts.map(t => <Toast key={t.id} toast={t} onRemove={onRemove} />)}
-    </div>
-  );
+export interface ToastMessage {
+    id: number;
+    title: string;
+    body?: string;
+    tone: "gold" | "coral" | "emerald" | "red";
 }
 
-function Toast({ toast, onRemove }: { toast: ToastMessage; onRemove: (id: string) => void }) {
-  const [visible, setVisible] = useState(false);
-  useEffect(() => {
-    requestAnimationFrame(() => setVisible(true));
-    const t = setTimeout(() => { setVisible(false); setTimeout(() => onRemove(toast.id), 200); }, DURATION);
-    return () => clearTimeout(t);
-  }, [toast.id, onRemove]);
+interface ToastCtx {
+    toast: (title: string, body?: string, tone?: ToastMessage["tone"]) => void;
+}
 
-  const bg = toast.type === "error" ? "var(--alert)"
-    : toast.type === "warning" ? "var(--amber)"
-    : "var(--hero-bg)";
+const Ctx = createContext<ToastCtx>({ toast: () => {} });
 
-  return (
-    <div style={{ background: bg, color: "#fff", padding: "10px 16px", borderRadius: 10,
-      fontSize: 13, fontWeight: 500, maxWidth: 320, pointerEvents: "auto",
-      boxShadow: "0 4px 16px rgba(0,0,0,0.3)",
-      opacity: visible ? 1 : 0, transform: visible ? "translateY(0)" : "translateY(8px)",
-      transition: "opacity 0.2s, transform 0.2s" }}>
-      {toast.message}
-    </div>
-  );
+export function useToast() {
+    return useContext(Ctx);
+}
+
+let nextId = 1;
+
+export function ToastProvider({ children }: { children: React.ReactNode }) {
+    const [toasts, setToasts] = useState<ToastMessage[]>([]);
+
+    const toast = useCallback((title: string, body?: string, tone: ToastMessage["tone"] = "gold") => {
+        const id = nextId++;
+        setToasts(t => [...t.slice(-2), { id, title, body, tone }]);
+    }, []);
+
+    const remove = useCallback((id: number) => {
+        setToasts(t => t.filter(x => x.id !== id));
+    }, []);
+
+    return (
+        <Ctx.Provider value={{ toast }}>
+            {children}
+            <div style={{
+                position: "fixed", bottom: 44, right: 16, display: "flex",
+                flexDirection: "column", gap: 8, zIndex: 9999, pointerEvents: "none",
+            }}>
+                {toasts.map(t => <ToastCard key={t.id} toast={t} onDone={remove} />)}
+            </div>
+        </Ctx.Provider>
+    );
+}
+
+const TONE: Record<ToastMessage["tone"], { border: string; label: string }> = {
+    gold: { border: "var(--gold-line)", label: "var(--gold)" },
+    coral: { border: "rgba(224,107,77,0.55)", label: "var(--coral-2)" },
+    emerald: { border: "rgba(62,207,142,0.5)", label: "var(--emerald)" },
+    red: { border: "rgba(248,113,113,0.5)", label: "var(--red)" },
+};
+
+function ToastCard({ toast, onDone }: { toast: ToastMessage; onDone: (id: number) => void }) {
+    useEffect(() => {
+        const t = setTimeout(() => onDone(toast.id), 3600);
+        return () => clearTimeout(t);
+    }, [toast.id, onDone]);
+
+    const tone = TONE[toast.tone];
+    return (
+        <div style={{
+            background: "var(--panel-2)",
+            border: `1px solid ${tone.border}`,
+            borderLeft: `3px solid ${tone.label}`,
+            borderRadius: "var(--radius)",
+            padding: "12px 16px",
+            minWidth: 260,
+            maxWidth: 340,
+            pointerEvents: "auto",
+            boxShadow: "var(--shadow)",
+            animation: "wp-toast-in 0.18s ease-out",
+        }}>
+            <div className="wp-overline" style={{ color: tone.label, borderTopColor: tone.border, marginBottom: toast.body ? 6 : 0 }}>
+                {toast.title}
+            </div>
+            {toast.body && (
+                <div style={{ fontSize: 13, color: "var(--text-2)", lineHeight: 1.45 }}>{toast.body}</div>
+            )}
+        </div>
+    );
 }

@@ -20,6 +20,11 @@ app/dist-ssr/
 .env.*
 !.env.example
 
+# Updater signing key — private half must never be committed. Generated
+# once with `npx tauri signer generate`; the CI release pipeline injects it
+# via TAURI_SIGNING_PRIVATE_KEY(_PASSWORD) secrets, not this file on disk.
+app/src-tauri/keys/*.key
+
 # OS artefacts
 Thumbs.db
 .DS_Store
