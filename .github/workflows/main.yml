@@ -76,10 +76,14 @@ jobs:
         run: npm ci
 
       - name: Run Rust tests
+        env:
+          TAURI_CONFIG: '{"bundle":{"resources":{"../../target/release/agentd.exe":"agentd.exe"}}}'
         run: cargo test --workspace
 
       - name: Build Tauri application
         working-directory: app
+        env:
+          TAURI_CONFIG: '{"bundle":{"resources":{"../../target/release/agentd.exe":"agentd.exe"}}}'
         run: npm run tauri build
 
       - name: Upload Windows installer
