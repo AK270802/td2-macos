@@ -87,7 +87,7 @@ fn start_reminder_watcher(app: tauri::AppHandle) {
                 if let Some(secs) = idle_since_secs {
                     let due = secs >= NOT_TRACKING_THRESHOLD_SECS
                         && last_not_tracking_reminder
-                            .map_or(true, |t| t.elapsed().as_secs() >= REMINDER_COOLDOWN_SECS);
+                            .is_none_or(|t| t.elapsed().as_secs() >= REMINDER_COOLDOWN_SECS);
                     if due {
                         let _ = app.notification().builder()
                             .title("Still there?")

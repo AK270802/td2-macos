@@ -70,5 +70,10 @@ pub fn open_logs_folder(app: tauri::AppHandle) -> Result<(), String> {
     use tauri_plugin_shell::ShellExt;
     let dir = common::db::logs_dir();
     std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
+    // tauri-plugin-shell's `open` is deprecated in favor of tauri-plugin-opener,
+    // but switching means adding a new plugin dependency, registering it in
+    // lib.rs, and granting it a capability — real churn for one call site.
+    // Deferred; this is the officially-supported (if deprecated) API for now.
+    #[allow(deprecated)]
     app.shell().open(dir.to_string_lossy().to_string(), None).map_err(|e| e.to_string())
 }

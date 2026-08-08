@@ -107,7 +107,7 @@ async fn run_inner(trigger_rx: &mut mpsc::UnboundedReceiver<oneshot::Sender<Resu
         let assign_secs = queries::get_config_u64(&conn, "assignment_sync_interval_min", 20).clamp(1, 240) * 60;
 
         // Batch sync + screenshots
-        if last_batch.map_or(true, |t| t.elapsed().as_secs() >= batch_secs) {
+        if last_batch.is_none_or(|t| t.elapsed().as_secs() >= batch_secs) {
             last_batch = Some(std::time::Instant::now());
             let next = chrono::Utc::now().timestamp() + batch_secs as i64;
             // Provisional flush of the in-progress session (if any) so an
@@ -129,7 +129,7 @@ async fn run_inner(trigger_rx: &mut mpsc::UnboundedReceiver<oneshot::Sender<Resu
         }
 
         // Assignment + config sync
-        if last_assign.map_or(true, |t| t.elapsed().as_secs() >= assign_secs) {
+        if last_assign.is_none_or(|t| t.elapsed().as_secs() >= assign_secs) {
             last_assign = Some(std::time::Instant::now());
             if let Err(e) = sync_config_and_assignments(&client, &conn).await {
                 warn!("Assignment sync error: {e}");
@@ -142,7 +142,7 @@ async fn run_inner(trigger_rx: &mut mpsc::UnboundedReceiver<oneshot::Sender<Resu
         }
 
         // Daily prune of synced local data
-        if last_prune.map_or(true, |t| t.elapsed().as_secs() >= 86_400) {
+        if last_prune.is_none_or(|t| t.elapsed().as_secs() >= 86_400) {
             last_prune = Some(std::time::Instant::now());
             let days = queries::get_config(&conn, "retention_days")
                 .and_then(|s| s.parse().ok()).unwrap_or(7i64);
@@ -262,11 +262,15 @@ async fn retry_pending(client: &reqwest::Client, conn: &rusqlite::Connection) ->
 
 // ── Screenshots ───────────────────────────────────────────────────────────────
 
+/// (uuid, file_path, task_id, ts, app_name, window_title) — one row from the
+/// `screenshots` table's not-yet-uploaded query below.
+type PendingScreenshotRow = (String, String, Option<String>, i64, Option<String>, Option<String>);
+
 async fn upload_screenshots(client: &reqwest::Client, conn: &rusqlite::Connection) -> Result<()> {
     let mut stmt = conn.prepare(
         "SELECT uuid,file_path,task_id,ts,app_name,window_title FROM screenshots WHERE uploaded=0 LIMIT 50"
     )?;
-    let rows: Vec<(String, String, Option<String>, i64, Option<String>, Option<String>)> =
+    let rows: Vec<PendingScreenshotRow> =
         stmt.query_map([], |r| {
             Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?, r.get(5)?))
         })?.filter_map(|r| r.ok()).collect();

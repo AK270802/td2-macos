@@ -80,7 +80,7 @@ async fn run_inner() -> Result<()> {
         last_tick = std::time::Instant::now();
 
         // Live-reload config every 30s (server pushes + settings changes).
-        if tick_count % 30 == 0 {
+        if tick_count.is_multiple_of(30) {
             cfg = load_config(&conn);
             idle.threshold_secs = cfg.idle_threshold;
         }
@@ -101,7 +101,7 @@ async fn run_inner() -> Result<()> {
         let idle_ms = platform::idle_ms();
 
         // ── Meeting detection (5s cadence) ───────────────────────────────────
-        if tick_count % 5 == 0 {
+        if tick_count.is_multiple_of(5) {
             in_meeting = meeting.evaluate(running);
             IN_MEETING.store(in_meeting, Ordering::Relaxed);
             if running {
@@ -244,7 +244,7 @@ async fn run_inner() -> Result<()> {
         }
 
         // ── Crash-recovery checkpoint every 60s ──────────────────────────────
-        if tick_count % 60 == 0 {
+        if tick_count.is_multiple_of(60) {
             if let Ok(t) = crate::ipc::timer().lock() {
                 t.checkpoint(&conn);
             }
