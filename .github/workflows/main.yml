@@ -29,6 +29,10 @@ jobs:
             xprintidle \
             libxdo-dev \
             libpipewire-0.3-dev \
+            libgbm-dev \
+            libwayland-dev \
+            libdrm-dev \
+            libegl1-mesa-dev \
             pkg-config
 
       - name: Install Rust
@@ -124,6 +128,10 @@ jobs:
             npm \
             libxdo-dev \
             libpipewire-0.3-dev \
+            libgbm-dev \
+            libwayland-dev \
+            libdrm-dev \
+            libegl1-mesa-dev \
             pkg-config
 
       - name: Install Rust
