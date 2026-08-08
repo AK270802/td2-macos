@@ -51,8 +51,15 @@ pub fn capture_and_save(
             let cx = r.x + (r.width as i32) / 2;
             let cy = r.y + (r.height as i32) / 2;
             screens.into_iter().find(|m| {
-                cx >= m.x() && cx < m.x() + m.width() as i32 &&
-                cy >= m.y() && cy < m.y() + m.height() as i32
+                // xcap 0.9's Monitor accessors return `Result` (a monitor can
+                // fail to report its geometry, e.g. mid-disconnect) — treat
+                // that as "doesn't contain the point" rather than propagating,
+                // since this is just picking which of several monitors to use.
+                let (Ok(mx), Ok(my), Ok(mw), Ok(mh)) = (m.x(), m.y(), m.width(), m.height()) else {
+                    return false;
+                };
+                cx >= mx && cx < mx + mw as i32 &&
+                cy >= my && cy < my + mh as i32
             })
         }
         (_, _) => None,
@@ -65,8 +72,8 @@ pub fn capture_and_save(
             .ok_or_else(|| anyhow::anyhow!("no monitor"))
     })?;
 
-    let mon_x = screen.x();
-    let mon_y = screen.y();
+    let mon_x = screen.x()?;
+    let mon_y = screen.y()?;
     let raw = screen.capture_image()?;
 
     let (w, h) = (raw.width(), raw.height());

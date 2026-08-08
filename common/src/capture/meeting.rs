@@ -144,7 +144,7 @@ impl MeetingDetector {
         // every ~60s so a "why isn't this detecting?" report always has real
         // signal data to look at, even when no meeting is ever detected.
         self.tick_count += 1;
-        if self.tick_count % 12 == 0 {
+        if self.tick_count.is_multiple_of(12) {
             tracing::info!(
                 "meeting check: app_match={app_match} title_match={title_match} score={score}/{THRESHOLD} in_meeting={} windows_seen={}",
                 self.in_meeting, windows.len()

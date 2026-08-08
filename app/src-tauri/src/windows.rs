@@ -268,7 +268,14 @@ pub fn show_idle_warning(app: &AppHandle) -> tauri::Result<()> {
                 .background_color(APP_BG)
                 .always_on_top(true)
                 .center()
-                .resizable(false)
+                // Must stay resizable, same as the mini widget: force_repaint()
+                // below relies on programmatic set_size() calls to trigger a
+                // real WM_SIZE and make WebView2 repaint. On Windows a
+                // resizable(false) window can suppress those, which left this
+                // window with the exact stale-paint bug the mini widget already
+                // hit — no user-facing resize handles are exposed either way,
+                // since decorations are off and there's no drag-resize UI.
+                .resizable(true)
                 .maximizable(false)
                 .on_page_load(|window, payload| {
                     if payload.event() == tauri::webview::PageLoadEvent::Finished {
