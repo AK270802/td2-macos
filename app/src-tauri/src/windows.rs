@@ -247,10 +247,21 @@ pub fn show_idle_warning(app: &AppHandle) -> tauri::Result<()> {
     }
     let app = app.clone();
     app.clone().run_on_main_thread(move || {
+        // Same WebView2 blank-paint quirk as the mini widget (see
+        // show_mini_widget above) — this window hit the identical bug and
+        // had none of that window's fixes applied. Mirroring them here:
+        // force_repaint on show/build, a delayed repaint once the page has
+        // actually finished loading, staggered follow-up nudges, and
+        // devtools open in debug builds so a JS crash isn't invisible.
         let result = if let Some(win) = app.get_webview_window("idle_warning") {
-            win.show().and_then(|_| win.set_focus())
+            let r = win.show().and_then(|_| win.set_focus());
+            force_repaint(&win);
+            schedule_delayed_repaint(app.clone(), "idle_warning", &[150, 350, 700, 1200]);
+            #[cfg(debug_assertions)]
+            win.open_devtools();
+            r
         } else {
-            WebviewWindowBuilder::new(&app, "idle_warning", WebviewUrl::App("index.html?window=idle_warning".into()))
+            let build_result = WebviewWindowBuilder::new(&app, "idle_warning", WebviewUrl::App("index.html?window=idle_warning".into()))
                 .title("Are you still working?")
                 .inner_size(420.0, 300.0)
                 .decorations(false)
@@ -259,8 +270,19 @@ pub fn show_idle_warning(app: &AppHandle) -> tauri::Result<()> {
                 .center()
                 .resizable(false)
                 .maximizable(false)
-                .build()
-                .map(|_| ())
+                .on_page_load(|window, payload| {
+                    if payload.event() == tauri::webview::PageLoadEvent::Finished {
+                        force_repaint(&window);
+                    }
+                })
+                .build();
+            if let Ok(win) = &build_result {
+                force_repaint(win);
+                schedule_delayed_repaint(app.clone(), "idle_warning", &[300, 700]);
+                #[cfg(debug_assertions)]
+                win.open_devtools();
+            }
+            build_result.map(|_| ())
         };
         if let Err(e) = &result {
             eprintln!("show_idle_warning failed: {e}");

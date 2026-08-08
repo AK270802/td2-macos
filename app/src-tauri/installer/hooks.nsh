@@ -10,6 +10,26 @@
 ; is impossible from a session-0 service), so a per-user Run key is not a
 ; regression — it's the same effective behavior, just scoped correctly.
 
+!macro NSIS_HOOK_PREINSTALL
+  ; Cleanup of the OLD Python-based agent ("EffiLens" / WorkPulseAgent.exe,
+  ; see ../../../agent/installer/workpulse.nsi) when migrating a user from
+  ; it to this Rust app -- see the RUST_AGENT_ENABLED backend rollout in
+  ; core-services/app/api/v1/agent.py. That Python agent is per-user, no
+  ; admin, no real Windows service (despite service-sounding naming in
+  ; agent/src/updater/auto_updater.py -- legacy naming only), installs to
+  ; $LOCALAPPDATA\WorkPulse as WorkPulseAgent.exe, autostarts via an HKCU
+  ; Run value named "WorkPulse", and ships its own uninstaller. All
+  ; best-effort / non-fatal: nsExec failures don't abort this install.
+  StrCpy $0 "$LOCALAPPDATA\WorkPulse"
+  IfFileExists "$0\WorkPulseAgent.exe" 0 +2
+    nsExec::ExecToLog '"$0\WorkPulseAgent.exe" quit'
+  nsExec::ExecToLog 'taskkill /IM WorkPulseAgent.exe /F'
+  IfFileExists "$0\Uninstall.exe" 0 +2
+    nsExec::ExecToLog '"$0\Uninstall.exe" /S _?=$0'
+  DeleteRegValue HKCU "SOFTWARE\Microsoft\Windows\CurrentVersion\Run" "WorkPulse"
+  RMDir /r "$0"
+!macroend
+
 !macro NSIS_HOOK_POSTINSTALL
   ; Best-effort cleanup of the legacy Windows Service from older
   ; (admin-installed) builds. Requires admin to actually remove; for
