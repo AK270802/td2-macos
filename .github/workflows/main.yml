@@ -34,9 +34,13 @@ jobs:
         uses: dtolnay/rust-toolchain@stable
 
       - name: Run tests
+        env:
+          TAURI_CONFIG: '{"bundle":{"resources":{"../../target/release/agentd":"agentd"}}}'
         run: cargo test --workspace
 
       - name: Run Clippy
+        env:
+          TAURI_CONFIG: '{"bundle":{"resources":{"../../target/release/agentd":"agentd"}}}'
         run: cargo clippy --workspace -- -D warnings
         continue-on-error: true
 
@@ -116,6 +120,8 @@ jobs:
 
       - name: Build Tauri DEB
         working-directory: app
+        env:
+          TAURI_CONFIG: '{"bundle":{"resources":{"../../target/release/agentd":"agentd"}}}'
         run: npm run tauri build -- --bundles deb
 
       - name: Upload Linux package
@@ -150,6 +156,8 @@ jobs:
 
       - name: Build Tauri DMG
         working-directory: app
+        env:
+          TAURI_CONFIG: '{"bundle":{"resources":{"../../target/release/agentd":"agentd"}}}'
         run: npm run tauri build -- --bundles dmg
 
       # Signing and notarization can be added later using
