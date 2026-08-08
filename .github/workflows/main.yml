@@ -28,6 +28,7 @@ jobs:
             xdotool \
             xprintidle \
             libxdo-dev \
+            libpipewire-0.3-dev \
             pkg-config
 
       - name: Install Rust
@@ -122,6 +123,7 @@ jobs:
             nodejs \
             npm \
             libxdo-dev \
+            libpipewire-0.3-dev \
             pkg-config
 
       - name: Install Rust
