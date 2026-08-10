@@ -12,7 +12,6 @@ tracing = { workspace = true }
 tracing-subscriber = { workspace = true }
 tracing-appender = { workspace = true }
 rusqlite = { version = "0.31", features = ["bundled-sqlcipher-vendored-openssl"] }
-keyring = { version = "3", features = ["windows-native"] }
 reqwest = { version = "0.12", features = ["json", "multipart", "rustls-tls"], default-features = false }
 semver = "1"
 addr = "0.15"

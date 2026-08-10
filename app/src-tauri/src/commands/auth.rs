@@ -46,18 +46,44 @@ pub fn get_session() -> Result<Option<serde_json::Value>, String> {
     Ok(Some(serde_json::json!({ "user_id": user_id, "email": email })))
 }
 
-/// Consent gate for startup routing: returns the server's consent state, or
-/// "unknown" when offline (UI proceeds and re-checks on the next launch).
+/// Consent gate for startup routing: returns the server's consent state when
+/// reachable, caching it locally (agent_config) so a later offline launch
+/// can answer from that cache instead of guessing. A brand new install that
+/// has never once reached the server has no cache to fall back on — that
+/// case fails CLOSED (consent required) rather than silently bypassing the
+/// gate, since consent is a non-negotiable privacy requirement, not a nice
+/// to have that's safe to skip on a network hiccup.
 #[command]
 pub async fn get_consent_status() -> Result<serde_json::Value, String> {
     let client = build_client().map_err(|e| e.to_string())?;
+    let conn = db::open().map_err(|e| e.to_string())?;
+
     match common::api::consent::get_status(&client).await {
-        Ok(s) => Ok(serde_json::to_value(&s).map_err(|e| e.to_string())?),
-        Err(_) => Ok(serde_json::json!({
-            "consent_status": "unknown",
-            "policy_version": 0,
-            "policy_content": null,
-        })),
+        Ok(s) => {
+            let _ = queries::set_config(&conn, "consent_status_cache", &s.consent_status);
+            let _ = queries::set_config(
+                &conn,
+                "consent_policy_version_cache",
+                &s.policy_version.map(|v| v.to_string()).unwrap_or_default(),
+            );
+            if let Some(content) = &s.policy_content {
+                let _ = queries::set_config(&conn, "consent_policy_content_cache", content);
+            }
+            Ok(serde_json::to_value(&s).map_err(|e| e.to_string())?)
+        }
+        Err(_) => match queries::get_config(&conn, "consent_status_cache") {
+            Some(status) => Ok(serde_json::json!({
+                "consent_status": status,
+                "policy_version": queries::get_config(&conn, "consent_policy_version_cache")
+                    .and_then(|v| v.parse::<i64>().ok()),
+                "policy_content": queries::get_config(&conn, "consent_policy_content_cache"),
+            })),
+            None => Ok(serde_json::json!({
+                "consent_status": "required",
+                "policy_version": 1,
+                "policy_content": null,
+            })),
+        },
     }
 }
 

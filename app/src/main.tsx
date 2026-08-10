@@ -60,14 +60,28 @@ function MainWindowApp() {
         if (!session) { setConsent("checking"); return; }
         invoke<{ consent_status: string; policy_version: number | null; policy_content: string | null }>("get_consent_status")
             .then(s => {
-                if (s.consent_status === "accepted" || s.consent_status === "unknown") {
+                // Only an explicit "accepted" (fresh from the server, or
+                // cached from a prior successful check) clears the gate —
+                // everything else, including a brand new install's
+                // "required" fallback, shows the consent screen. Consent is
+                // a privacy requirement, not something safe to bypass on
+                // ambiguity.
+                if (s.consent_status === "accepted") {
                     setConsent("cleared");
                 } else {
                     setPolicy({ version: s.policy_version ?? 1, content: s.policy_content });
                     setConsent("required");
                 }
             })
-            .catch(() => setConsent("cleared"));
+            // get_consent_status itself already falls back to a local cache
+            // (or "required" with no cache) before ever rejecting — a
+            // rejection here means the Tauri command call itself failed
+            // (e.g. local db unreadable), which is exactly the case to fail
+            // closed on, not silently let through.
+            .catch(() => {
+                setPolicy({ version: 1, content: null });
+                setConsent("required");
+            });
     }, [session]);
 
     if (loading) return <div style={{ background: "var(--bg)", height: "100vh" }} />;
