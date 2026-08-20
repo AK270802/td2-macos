@@ -36,7 +36,7 @@ export default function MainPage() {
         const load = () => {
             invoke<Task[]>("send_ipc", { cmd: "get_assigned_tasks" })
                 .then(r => { if (Array.isArray(r)) setTasks(r); })
-                .catch(() => {});
+                .catch(e => console.error("get_assigned_tasks failed:", e));
             invoke<Record<string, number>>("send_ipc", { cmd: "get_task_times_today" })
                 .then(r => { if (r) { setTaskTimes(r); setTaskTimesFetchedAt(Date.now()); } })
                 .catch(() => {});

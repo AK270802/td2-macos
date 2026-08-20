@@ -326,6 +326,7 @@ pub(crate) async fn sync_config_and_assignments(client: &reqwest::Client, conn: 
     let keep: Vec<_> = tasks.iter().map(|t| t.task_id).collect();
     let active = crate::ipc::active_task_id();
     queries::prune_stale_assignments(conn, &keep, active.as_ref())?;
-    info!("Config + assignments synced: {} tasks", tasks.len());
+    let project_count = tasks.iter().map(|t| t.project_id).collect::<std::collections::HashSet<_>>().len();
+    info!("Config + assignments synced: {} projects, {} tasks", project_count, tasks.len());
     Ok(())
 }

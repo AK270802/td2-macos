@@ -114,7 +114,7 @@ jobs:
           retention-days: 30
 
   build-macos:
-    name: Build macOS DMG
+    name: Build macOS DMG (universal)
     runs-on: macos-latest
     needs: test
 
@@ -122,8 +122,13 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
+      # macos-latest runners are Apple Silicon; without both targets the
+      # DMG only carries an arm64 slice and Intel Macs refuse to launch it
+      # ("this application is not supported on this Mac").
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-apple-darwin,x86_64-apple-darwin
 
       - name: Setup Node.js
         uses: actions/setup-node@v4
@@ -136,12 +141,29 @@ jobs:
         working-directory: app
         run: npm ci
 
-      - name: Build Tauri DMG
+      # Tauri's `--target universal-apple-darwin` only lipo-merges the
+      # src-tauri crate's own binary. agentd is bundled as a raw external
+      # resource (not compiled as part of that crate), so it needs its own
+      # per-arch build + lipo merge before packaging, placed at the same
+      # target/release/agentd path the resources mapping below expects.
+      - name: Build agentd (universal)
+        run: |
+          cargo build --release -p agentd --target aarch64-apple-darwin
+          cargo build --release -p agentd --target x86_64-apple-darwin
+          mkdir -p target/release
+          lipo -create -output target/release/agentd \
+            target/aarch64-apple-darwin/release/agentd \
+            target/x86_64-apple-darwin/release/agentd
+
+      - name: Build Tauri DMG (universal)
         working-directory: app
         env:
-          TAURI_CONFIG: '{"bundle":{"resources":{"../../target/release/agentd":"agentd"}}}'
+          # beforeBuildCommand's own `cargo build -p agentd` only builds the
+          # host arch and would clobber the universal binary built above, so
+          # override it here to skip that and just run the frontend build.
+          TAURI_CONFIG: '{"build":{"beforeBuildCommand":"npm run build"},"bundle":{"resources":{"../../target/release/agentd":"agentd"}}}'
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
-        run: npm run tauri build -- --bundles dmg
+        run: npm run tauri build -- --target universal-apple-darwin --bundles dmg
 
       # Signing and notarization can be added later using
       # Apple certificates and GitHub Actions secrets.
@@ -150,5 +172,5 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: WorkPulse-macOS
-          path: target/release/bundle/dmg/*.dmg
+          path: target/universal-apple-darwin/release/bundle/dmg/*.dmg
           retention-days: 30
