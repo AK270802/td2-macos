@@ -147,24 +147,27 @@ jobs:
       # agentd is bundled as a Tauri `externalBin` sidecar, not compiled as
       # part of the src-tauri crate, so `--target universal-apple-darwin`
       # (which only lipo-merges the app's own binary) doesn't cover it.
-      # Tauri's sidecar packaging lipo-merges externalBin entries itself when
-      # it finds both per-arch triples present under src-tauri/binaries/, so
-      # build+place each arch's agentd there directly (no manual lipo needed).
-      - name: Build agentd sidecars (per-arch)
+      # Tauri does NOT auto-lipo per-arch sidecars for a universal build --
+      # it looks for a single binary named exactly `<name>-universal-apple-darwin`
+      # (confirmed via CI failure: "resource path `binaries/agentd-universal-
+      # apple-darwin` doesn't exist" when only the two arch-suffixed copies
+      # were present) -- so lipo-merge it ourselves under that exact name.
+      - name: Build agentd sidecar (universal)
         run: |
           cargo build --release -p agentd --target aarch64-apple-darwin
           cargo build --release -p agentd --target x86_64-apple-darwin
           mkdir -p app/src-tauri/binaries
-          cp target/aarch64-apple-darwin/release/agentd app/src-tauri/binaries/agentd-aarch64-apple-darwin
-          cp target/x86_64-apple-darwin/release/agentd app/src-tauri/binaries/agentd-x86_64-apple-darwin
-          chmod +x app/src-tauri/binaries/agentd-aarch64-apple-darwin app/src-tauri/binaries/agentd-x86_64-apple-darwin
+          lipo -create -output app/src-tauri/binaries/agentd-universal-apple-darwin \
+            target/aarch64-apple-darwin/release/agentd \
+            target/x86_64-apple-darwin/release/agentd
+          chmod +x app/src-tauri/binaries/agentd-universal-apple-darwin
 
       - name: Build Tauri DMG (universal)
         working-directory: app
         env:
-          # beforeBuildCommand's own prepare-agentd-sidecar.mjs only builds
-          # for the host arch and would redundantly rebuild (though not
-          # clobber) one of the two sidecars placed above, so override it
+          # beforeBuildCommand's own prepare-agentd-sidecar.mjs would build
+          # an unrelated host-arch sidecar (agentd-aarch64-apple-darwin) that
+          # this universal build doesn't use, wasting a build -- override it
           # here to skip that and just run the frontend build.
           TAURI_CONFIG: '{"build":{"beforeBuildCommand":"npm run build"}}'
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
