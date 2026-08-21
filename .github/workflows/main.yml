@@ -38,22 +38,23 @@ jobs:
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
 
-      # workpulse-app's build.rs checks that its bundled `agentd` resource
+      # workpulse-app's build.rs checks that its `externalBin` sidecar
       # exists on disk at compile time -- normally satisfied by Tauri's
       # own beforeBuildCommand lifecycle hook during `tauri build`, but
       # plain `cargo test`/`cargo clippy` never trigger that hook, so it
-      # has to be built explicitly here first.
-      - name: Build agentd
-        run: cargo build --release -p agentd
+      # has to be built and placed explicitly here first, named for this
+      # runner's host target triple as the sidecar mechanism requires.
+      - name: Build agentd sidecar
+        run: |
+          cargo build --release -p agentd
+          mkdir -p app/src-tauri/binaries
+          cp target/release/agentd app/src-tauri/binaries/agentd-x86_64-unknown-linux-gnu
+          chmod +x app/src-tauri/binaries/agentd-x86_64-unknown-linux-gnu
 
       - name: Run tests
-        env:
-          TAURI_CONFIG: '{"bundle":{"resources":{"../../target/release/agentd":"agentd"}}}'
         run: cargo test --workspace
 
       - name: Run Clippy
-        env:
-          TAURI_CONFIG: '{"bundle":{"resources":{"../../target/release/agentd":"agentd"}}}'
         run: cargo clippy --workspace -- -D warnings
         continue-on-error: true
 
@@ -99,10 +100,12 @@ jobs:
         working-directory: app
         run: npm ci
 
+      # beforeBuildCommand already runs prepare-agentd-sidecar.mjs, which
+      # builds agentd for the host triple and places it under
+      # app/src-tauri/binaries/ -- nothing extra needed here.
       - name: Build Tauri DEB
         working-directory: app
         env:
-          TAURI_CONFIG: '{"bundle":{"resources":{"../../target/release/agentd":"agentd"}}}'
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
         run: npm run tauri build -- --bundles deb
 
@@ -141,27 +144,29 @@ jobs:
         working-directory: app
         run: npm ci
 
-      # Tauri's `--target universal-apple-darwin` only lipo-merges the
-      # src-tauri crate's own binary. agentd is bundled as a raw external
-      # resource (not compiled as part of that crate), so it needs its own
-      # per-arch build + lipo merge before packaging, placed at the same
-      # target/release/agentd path the resources mapping below expects.
-      - name: Build agentd (universal)
+      # agentd is bundled as a Tauri `externalBin` sidecar, not compiled as
+      # part of the src-tauri crate, so `--target universal-apple-darwin`
+      # (which only lipo-merges the app's own binary) doesn't cover it.
+      # Tauri's sidecar packaging lipo-merges externalBin entries itself when
+      # it finds both per-arch triples present under src-tauri/binaries/, so
+      # build+place each arch's agentd there directly (no manual lipo needed).
+      - name: Build agentd sidecars (per-arch)
         run: |
           cargo build --release -p agentd --target aarch64-apple-darwin
           cargo build --release -p agentd --target x86_64-apple-darwin
-          mkdir -p target/release
-          lipo -create -output target/release/agentd \
-            target/aarch64-apple-darwin/release/agentd \
-            target/x86_64-apple-darwin/release/agentd
+          mkdir -p app/src-tauri/binaries
+          cp target/aarch64-apple-darwin/release/agentd app/src-tauri/binaries/agentd-aarch64-apple-darwin
+          cp target/x86_64-apple-darwin/release/agentd app/src-tauri/binaries/agentd-x86_64-apple-darwin
+          chmod +x app/src-tauri/binaries/agentd-aarch64-apple-darwin app/src-tauri/binaries/agentd-x86_64-apple-darwin
 
       - name: Build Tauri DMG (universal)
         working-directory: app
         env:
-          # beforeBuildCommand's own `cargo build -p agentd` only builds the
-          # host arch and would clobber the universal binary built above, so
-          # override it here to skip that and just run the frontend build.
-          TAURI_CONFIG: '{"build":{"beforeBuildCommand":"npm run build"},"bundle":{"resources":{"../../target/release/agentd":"agentd"}}}'
+          # beforeBuildCommand's own prepare-agentd-sidecar.mjs only builds
+          # for the host arch and would redundantly rebuild (though not
+          # clobber) one of the two sidecars placed above, so override it
+          # here to skip that and just run the frontend build.
+          TAURI_CONFIG: '{"build":{"beforeBuildCommand":"npm run build"}}'
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
         run: npm run tauri build -- --target universal-apple-darwin --bundles dmg
 

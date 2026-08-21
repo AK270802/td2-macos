@@ -4,32 +4,38 @@ mod updater;
 mod windows;
 
 use tauri_plugin_notification::NotificationExt;
+use tauri_plugin_shell::ShellExt;
 
 /// agentd lives in the user session (desktop capture is impossible from a
-/// service). If it isn't answering, spawn the copy that ships next to this
-/// executable (installed layout) or the workspace build (dev layout).
-///
-/// Resource placement is bundle-format-specific — NSIS drops resources next
-/// to the exe, but a macOS .app puts them under Contents/Resources while the
-/// exe sits in Contents/MacOS — so the installed-layout guesses below aren't
-/// reliable across platforms. `app.path().resource_dir()` is Tauri's own
-/// resolver for that location and is tried first.
+/// service). If it isn't answering, spawn the copy shipped alongside the app
+/// as a Tauri sidecar (see `bundle.externalBin` in tauri.conf.json) — the
+/// shell plugin resolves the correct per-platform location for it (e.g.
+/// Contents/MacOS/ inside a macOS .app, where a manual `current_exe()`-based
+/// guess previously failed to find it). Dev builds without a sidecar binary
+/// present fall back to the plain workspace target/ dirs.
 fn ensure_agentd_running(app: &tauri::AppHandle) {
-    let exe_name = if cfg!(windows) { "agentd.exe" } else { "agentd" };
-    let mut candidates: Vec<std::path::PathBuf> = Vec::new();
-    if let Ok(resource_dir) = tauri::Manager::path(app).resource_dir() {
-        candidates.push(resource_dir.join(exe_name));
-    }
-    if let Some(dir) = std::env::current_exe().ok().and_then(|p| p.parent().map(|d| d.to_path_buf())) {
-        candidates.push(dir.join(exe_name));                                  // installed
-        candidates.push(dir.join("resources").join(exe_name));                // installed (resource dir)
-        candidates.push(dir.join("../../../target/release").join(exe_name));  // dev
-        candidates.push(dir.join("../../../target/debug").join(exe_name));    // dev
-    }
+    let app = app.clone();
     tauri::async_runtime::spawn(async move {
         if common::ipc_transport::request("ping", None).await.is_ok() {
             return;
         }
+        match app.shell().sidecar("agentd").and_then(|cmd| Ok(cmd.args(["run"]).spawn()?)) {
+            Ok(_) => {
+                tracing::info!("spawned agentd sidecar");
+                return;
+            }
+            Err(e) => tracing::warn!("agentd sidecar unavailable ({e}), falling back to dev paths"),
+        }
+
+        let exe_name = if cfg!(windows) { "agentd.exe" } else { "agentd" };
+        let candidates: Vec<std::path::PathBuf> = std::env::current_exe()
+            .ok()
+            .and_then(|p| p.parent().map(|d| d.to_path_buf()))
+            .map(|dir| vec![
+                dir.join("../../../target/release").join(exe_name), // dev
+                dir.join("../../../target/debug").join(exe_name),   // dev
+            ])
+            .unwrap_or_default();
         for path in candidates {
             if path.exists() {
                 match std::process::Command::new(&path).arg("run").spawn() {

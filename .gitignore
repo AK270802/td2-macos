@@ -10,6 +10,9 @@ app/node_modules/
 app/src-tauri/target/
 app/src-tauri/gen/
 
+# agentd sidecar binaries (built per target-triple by prepare-agentd-sidecar.mjs / CI)
+app/src-tauri/binaries/
+
 # Vite / frontend build
 app/dist/
 app/dist-ssr/
