@@ -19,7 +19,7 @@ ENTITLEMENTS="$HERE/../Resources/EffiLens.entitlements"
 [ -d "$APP_IN" ] || { echo "App bundle not found: $APP_IN" >&2; exit 1; }
 mkdir -p "$OUT"
 STAGE="$(mktemp -d)"
-trap 'hdiutil detach "$STAGE/mnt" -quiet >/dev/null 2>&1 || true; rm -rf "$STAGE"' EXIT
+trap 'hdiutil detach "$STAGE/mnt" -quiet >/dev/null 2>&1 || true; hdiutil detach "$STAGE/rwmnt" -force -quiet >/dev/null 2>&1 || true; rm -rf "$STAGE"' EXIT
 
 APP="$STAGE/EffiLens.app"
 ditto "$APP_IN" "$APP"
@@ -93,7 +93,28 @@ ditto -c -k --keepParent "$APP" "$ZIP"
 mkdir -p "$STAGE/dmg"
 ditto "$APP" "$STAGE/dmg/EffiLens.app"
 ln -s /Applications "$STAGE/dmg/Applications"
-hdiutil create -volname "EffiLens $VERSION" -srcfolder "$STAGE/dmg" -ov -format UDZO -fs HFS+ "$DMG" >/dev/null
+# GitHub macOS runners intermittently fail `hdiutil create -srcfolder` with
+# "Resource busy" (background scanners holding files). Build a blank writable
+# image, copy the payload in, convert to compressed UDZO; retry each step.
+retry() {
+  local n=1
+  until "$@"; do
+    [ "$n" -ge 5 ] && return 1
+    echo "retry $n: $*" >&2
+    n=$((n + 1)); sleep $((n * 3))
+  done
+}
+SIZE_MB=$(( $(du -sm "$STAGE/dmg" | cut -f1) + 40 ))
+RW="$STAGE/rw.dmg"
+retry hdiutil create -size "${SIZE_MB}m" -fs HFS+ -volname "EffiLens $VERSION" -ov "$RW" >/dev/null
+mkdir -p "$STAGE/rwmnt"
+retry hdiutil attach "$RW" -nobrowse -noverify -mountpoint "$STAGE/rwmnt" -quiet
+ditto "$STAGE/dmg/EffiLens.app" "$STAGE/rwmnt/EffiLens.app"
+ln -s /Applications "$STAGE/rwmnt/Applications"
+sync
+retry hdiutil detach "$STAGE/rwmnt" -quiet || retry hdiutil detach "$STAGE/rwmnt" -force -quiet
+rm -f "$DMG"
+retry hdiutil convert "$RW" -format UDZO -imagekey zlib-level=9 -o "$DMG" >/dev/null
 
 # Component package: the app bundle only (agent + LaunchAgent live inside it,
 # so no files outside /Applications/EffiLens.app are ever written).
