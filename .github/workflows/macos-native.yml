@@ -220,6 +220,18 @@ jobs:
             ARCHS="arm64 x86_64" ONLY_ACTIVE_ARCH=NO \
             CODE_SIGN_IDENTITY=- CODE_SIGNING_REQUIRED=NO CODE_SIGNING_ALLOWED=NO \
             build 2>&1 | tee "$RUNNER_TEMP/xcodebuild-${{ matrix.configuration }}.log"
+      - name: Show compiler errors
+        if: failure()
+        run: |
+          LOG="$RUNNER_TEMP/xcodebuild-${{ matrix.configuration }}.log"
+          echo "===== Swift compiler errors (deduplicated) ====="
+          grep -E "^/.*\.swift:[0-9]+:[0-9]+: error:" "$LOG" | sort -u | head -60 | tee "$RUNNER_TEMP/errors.txt"
+          echo "===== with context ====="
+          grep -E -A4 "^/.*\.swift:[0-9]+:[0-9]+: error:" "$LOG" | head -200
+          while IFS= read -r line; do
+            file="${line%%:*}"; rest="${line#*:}"; ln="${rest%%:*}"; rest="${rest#*:}"; col="${rest%%:*}"; msg="${rest#*error: }"
+            echo "::error file=${file#$GITHUB_WORKSPACE/},line=$ln,col=$col::$msg"
+          done < "$RUNNER_TEMP/errors.txt"
       - name: Validate bundle
         run: |
           APP="$RUNNER_TEMP/dd/Build/Products/${{ matrix.configuration }}/EffiLens.app"

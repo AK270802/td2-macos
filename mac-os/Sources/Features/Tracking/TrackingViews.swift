@@ -291,10 +291,15 @@ struct ProjectsView: View {
         return summary.items.first { $0.projectId == project.id }?.totalDurationSec ?? 0
     }
 
+    private static func share(week: Int?, total: Int?) -> Double {
+        guard let week, let total, week > 0, total > 0 else { return 0 }
+        return Double(week) / Double(total)
+    }
+
     private func projectCard(_ project: AssignedProject) -> some View {
         let tint = IdentityColor.color(for: project.id)
         let week = weekSeconds(project)
-        let share = (week ?? 0) > 0 && (summary?.totalDurationSec ?? 0) > 0 ? Double(week ?? 0) / Double(summary?.totalDurationSec ?? 1) : 0
+        let share = Self.share(week: week, total: summary?.totalDurationSec)
         return Card {
             HStack(spacing: Space.m) {
                 IconTile(symbol: "folder", tint: tint)
@@ -330,6 +335,11 @@ struct ProjectsView: View {
 // MARK: - Assigned tasks (prototype V.tasks)
 
 struct TasksView: View {
+    private static func subtitle(_ row: TaskChoice) -> String {
+        guard let description = row.task.description, !description.isEmpty else { return row.project.name }
+        return "\(row.project.name) · \(description)"
+    }
+
     @Environment(AppModel.self) private var model
     @Environment(Navigator.self) private var navigator
     @State private var work: AssignedWorkModel
@@ -368,7 +378,7 @@ struct TasksView: View {
                 VStack(spacing: 8) {
                     ForEach(rows) { row in
                         TaskRowCard(title: row.task.name,
-                                    subtitle: [row.project.name, row.task.description].compactMap { $0 }.filter { !$0.isEmpty }.joined(separator: " · "),
+                                    subtitle: Self.subtitle(row),
                                     dot: IdentityColor.color(for: row.project.id), selected: model.isCurrent(row.task)) {
                             if let sec = summary?.items.first(where: { $0.taskId == row.task.id })?.totalDurationSec {
                                 Text("\(Format.duration(sec)) this week").font(Typo.caption).foregroundStyle(Palette.textTertiary).monospacedDigit()
