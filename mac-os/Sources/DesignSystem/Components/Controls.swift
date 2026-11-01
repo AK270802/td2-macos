@@ -455,16 +455,13 @@ struct Page<Content: View>: View {
 }
 
 /// Two-column grid with a fractional ratio (prototype `grid-template-columns: a fr b fr`).
-struct FractionalColumns<Left: View, Right: View>: View {
+/// Pass exactly two views in the closure: left, then right.
+struct FractionalColumns<Content: View>: View {
     var ratio: CGFloat = 1.3
-    @ViewBuilder var left: Left
-    @ViewBuilder var right: Right
+    @ViewBuilder var content: Content
 
     var body: some View {
-        RatioRow(ratio: ratio, spacing: Space.grid) {
-            left
-            right
-        }
+        RatioRow(ratio: ratio, spacing: Space.grid) { content }
     }
 }
 
