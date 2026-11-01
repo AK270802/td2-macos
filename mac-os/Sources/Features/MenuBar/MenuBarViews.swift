@@ -147,7 +147,7 @@ struct MenuBarPopover: View {
         guard model.phase == .ready, let environment = model.environment else { return }
         if model.isAgentConnected { stats = try? await environment.agent?.localTimeStats() }
         if let b = try? await environment.leave.balance() {
-            leaveLeft = "\(Format.days(FlexibleDecimal((b.paidRemaining?.value ?? 0) + (b.compOffRemaining?.value ?? 0)))) days"
+            leaveLeft = "\(b.totalRemainingText) days"
         }
         if let projects = try? await environment.work.assignedProjects() {
             recent = Array(TaskChoice.all(projects).prefix(3))

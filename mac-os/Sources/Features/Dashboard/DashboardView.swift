@@ -80,10 +80,20 @@ struct DashboardView: View {
             StatTileBody(value: "\(s.productivePct)", suffix: "%", footnote: "Today")
         }
         kpiCard("Leave left", symbol: "leaf", state: viewModel.balance) { b in
-            StatTileBody(value: Format.days(FlexibleDecimal((b.paidRemaining?.value ?? 0) + (b.compOffRemaining?.value ?? 0))),
-                         suffix: "days",
-                         footnote: viewModel.pendingLeaveCount.map { $0 == 0 ? "No pending requests" : "\($0) request\($0 == 1 ? "" : "s") pending" })
+            StatTileBody(value: b.totalRemainingText, suffix: "days", footnote: pendingText)
         }
+    }
+
+    private var pendingText: String? {
+        guard let count = viewModel.pendingLeaveCount else { return nil }
+        if count == 0 { return "No pending requests" }
+        return count == 1 ? "1 request pending" : "\(count) requests pending"
+    }
+
+    private func ringProgress(today: Int, state: AgentTimerState?) -> Double {
+        var worked = today
+        if state?.state == .running { worked += state?.elapsedSecs ?? 0 }
+        return Double(worked) / Double(max(dailyGoal, 1))
     }
 
     private func kpiCard<V, C: View>(_ title: String, symbol: String, state: Loadable<V>, @ViewBuilder content: @escaping (V) -> C) -> some View {
@@ -116,7 +126,7 @@ struct DashboardView: View {
         let running = state?.state == .running
         return Card("Active session", trailing: sessionPill) {
             HStack(spacing: 22) {
-                ProgressRing(progress: Double(todaySec + (running ? (state?.elapsedSecs ?? 0) : 0)) / Double(max(dailyGoal, 1)), lineWidth: 11) {
+                ProgressRing(progress: ringProgress(today: todaySec, state: state), lineWidth: 11) {
                     VStack(spacing: 2) {
                         Text(Format.clock(state?.elapsedSecs ?? 0)).font(.system(size: 20, weight: .semibold, design: .monospaced)).monospacedDigit()
                         Text("of \(Format.hours(dailyGoal, fractionDigits: 0))h goal").font(.system(size: 10.5)).foregroundStyle(Palette.textTertiary)
@@ -152,9 +162,14 @@ struct DashboardView: View {
         Card("Weekly hours") {
             LoadStateView(state: viewModel.weeklyActivity, emptyTitle: "No activity this week", emptySymbol: "chart.bar",
                           isEmpty: { $0.isEmpty }, retry: { Task { await viewModel.loadWeeklyActivity() } }) { days in
-                BarsChart(bars: Self.bars(for: days), maxValue: max(9, days.map { Double($0.activeSec) / 3600 }.max() ?? 9))
+                BarsChart(bars: Self.bars(for: days), maxValue: Self.maxHours(days))
             }
         }
+    }
+
+    private static func maxHours(_ days: [UtilisationDay]) -> Double {
+        let peak: Double = days.map { Double($0.activeSec) / 3600 }.max() ?? 0
+        return max(9, peak)
     }
 
     private static func bars(for days: [UtilisationDay]) -> [BarsChart.Bar] {
@@ -295,5 +310,14 @@ struct LeaveStatusPill: View {
         case .cancelled: Pill(text: "Cancelled", kind: .gray)
         case .none: Pill(text: "Unknown", kind: .gray)
         }
+    }
+}
+
+extension LeaveBalance {
+    /// Paid + comp-off days remaining (server-computed values, summed for display).
+    var totalRemainingText: String {
+        let paid: Decimal = paidRemaining?.value ?? 0
+        let compOff: Decimal = compOffRemaining?.value ?? 0
+        return Format.days(FlexibleDecimal(paid + compOff))
     }
 }
