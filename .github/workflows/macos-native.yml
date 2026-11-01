@@ -56,7 +56,8 @@ jobs:
           # LaunchAgent template with the placeholder substituted
           sed 's|__API_URL__|https://dev-workpulse-api.baseel.com|' Resources/LaunchAgent.plist.in > "$RUNNER_TEMP/la.plist"
           plutil -lint "$RUNNER_TEMP/la.plist"
-          find Resources/Assets.xcassets -name Contents.json -print0 | xargs -0 -n1 plutil -lint >/dev/null
+          # Asset catalogue manifests are JSON (plutil -lint rejects them).
+          find Resources/Assets.xcassets -name Contents.json -print0 | xargs -0 -n1 python3 -m json.tool >/dev/null
       - name: XcodeGen spec
         working-directory: mac-os
         run: xcodegen dump --spec project.yml --type summary
