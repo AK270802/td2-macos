@@ -56,6 +56,12 @@ final class AppModel {
     func start() async {
         guard let environment, phase == .launching else { return }
         observeSession(environment.session)
+        if !Prefs.bool(Prefs.rememberMac) {
+            // "Remember this Mac" was off: forget the previous session.
+            await environment.session.signOut()
+            phase = .signedOut
+            return
+        }
         if await environment.session.restore() {
             await completeSignIn()
         } else {

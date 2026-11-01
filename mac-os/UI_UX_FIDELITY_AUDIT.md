@@ -7,6 +7,16 @@
 
 ## 0. Authority rules applied
 
+> **Update 2026-11-02 (review round 2):** after the first screenshot review, the instruction was to "match exactly as prototype", including accents, typography and colours. That supersedes the brand-hex and SF Pro rows below:
+> - Accent is now the prototype gold `#D5A04A` / `#F0C779` in both appearances.
+> - Display titles use **Instrument Serif** (OFL, bundled in `Resources/Fonts`) with italic accent emphasis. Body text stays SF Pro and numerals SF Mono, as the prototype renders on a Mac.
+> - Surfaces are translucent over a `GlassBackdrop` reproducing the prototype wallpaper and glass.
+> - Light-mode primary buttons are white, as in the prototype CSS.
+> - Status pill colours are the same in both appearances.
+>
+> The official logo and app icon are still used. To restore the `BRAND_SPEC.md` accent, edit `Palette.accent*` in `Tokens.swift`.
+
+
 | Topic | Prototype | Brand / user rule | Decision |
 |---|---|---|---|
 | Accent | `--gold #D5A04A`, `--gold2 #F0C779` gradient | Light `#C8912E`, dark `#FCAC04`, navy `#022957` | Brand colours replace the prototype golds. Prototype *usage* is kept (primary button gradient, selection tint 22 %, ring gradient). |
@@ -94,3 +104,21 @@ CI job `visual-review` (`.github/workflows/macos-native.yml`):
 4. Both folders are uploaded as the `visual-review` artifact for side-by-side comparison. Corrected screenshots replace "current" on each run.
 
 Parity is judged by people from these screenshots. The build passing is not evidence of visual parity.
+
+## 6. Review round 2 (screenshots from CI run #12)
+
+| Finding | Fix |
+|---|---|
+| Sans display titles vs prototype serif with italic emphasis | Instrument Serif bundled; `HeroTitle` uses serif plus italic gold emphasis; onboarding, art caption, calendar month, detail and member titles all serif |
+| Accent too saturated (`#FCAC04`) | Prototype gold tokens |
+| Flat backgrounds vs wallpaper-through-glass | `GlassBackdrop` behind the window; translucent sidebar, main, toolbar and cards |
+| Onboarding window had an empty 28 pt strip | Window sized by frame (title bar overlays content); onboarding fills the window |
+| Calendar grid disappeared when data failed | Grid always drawn from the calendar; events overlay; errors shown inline |
+| Sidebar user card rendered as "?" (Menu collapsed its label) | Plain button to Account settings plus a context menu for Sign Out |
+| Missing "Remember this Mac" and "· Connected" | Real checkbox (off → session discarded at next launch); real reachability via `GET /agent/version` |
+| Sidebar icons (filled or multicolour, different glyphs) | Outline monochrome glyphs matching the prototype set |
+| Mini-timer toolbar glyph | Custom capsule-with-dot glyph |
+| Light-mode primary buttons gold vs prototype white | White with border in light mode (prototype CSS specificity) |
+| Review windows captured at inconsistent sizes | Review mode forces 1200 × 780 (main) / 820 × 560 (onboarding) |
+
+Data areas in review captures still show error states, because review mode is not signed in. That is by design: no fixture data.

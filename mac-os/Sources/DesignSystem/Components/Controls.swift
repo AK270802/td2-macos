@@ -26,7 +26,7 @@ struct EffiButtonStyle: ButtonStyle {
             .foregroundStyle(foreground)
             .background(background, in: shape)
             .overlay(shape.strokeBorder(border, lineWidth: 0.5))
-            .shadow(color: .black.opacity(kind == .normal ? 0.15 : 0), radius: 0.5, y: 1)
+            .shadow(color: .black.opacity(kind == .normal || (kind == .primary && scheme == .light) ? 0.15 : 0), radius: 0.5, y: 1)
             .brightness(configuration.isPressed ? -0.12 : 0)
             .opacity(isEnabled ? 1 : 0.4)
             .contentShape(shape)
@@ -44,14 +44,15 @@ struct EffiButtonStyle: ButtonStyle {
     private var background: AnyShapeStyle {
         switch kind {
         case .normal: return AnyShapeStyle(scheme == .dark ? Color.white.opacity(0.10) : Color.white)
-        case .primary: return AnyShapeStyle(Palette.accentGradient)
+        case .primary: return scheme == .dark ? AnyShapeStyle(Palette.accentGradient) : AnyShapeStyle(Color.white)
         case .danger: return AnyShapeStyle(Palette.redFill.opacity(0.16))
         case .blue: return AnyShapeStyle(LinearGradient(colors: [Color(hex: 0x5C9CFF), Color(hex: 0x2F78F0)], startPoint: .top, endPoint: .bottom))
         }
     }
 
     private var border: Color {
-        kind == .normal ? (scheme == .dark ? Color.white.opacity(0.12) : Color.black.opacity(0.12)) : .clear
+        if scheme == .light, kind == .normal || kind == .primary { return Color.black.opacity(0.12) }
+        return kind == .normal ? Color.white.opacity(0.12) : .clear
     }
 }
 
@@ -511,19 +512,49 @@ struct EqualColumns<Content: View>: View {
     }
 }
 
-/// `.hero-t` with an accent-coloured emphasised word (prototype `<em>`).
+/// `.hero-t`: Instrument Serif, with the emphasised word in italic gold
+/// (prototype `<em style="color:var(--gold2)">`).
 struct HeroTitle: View {
     let prefix: String
     let emphasis: String
     var suffix: String = ""
-    var font: Font = Typo.hero
+    var size: CGFloat = 38
 
     var body: some View {
-        (Text(prefix) + Text(emphasis).foregroundColor(Palette.accentText) + Text(suffix))
-            .font(font)
+        (Text(prefix).font(Typo.serif(size))
+         + Text(emphasis).font(Typo.serifItalic(size)).foregroundColor(Palette.accentText)
+         + Text(suffix).font(Typo.serif(size)))
             .tracking(-0.3)
             .foregroundStyle(Palette.textPrimary)
-            .lineSpacing(0)
+    }
+}
+
+/// Window background: the prototype's wallpaper gradients seen through the
+/// window glass (`#desktop` + `.win` `--glass`), so translucent surfaces
+/// (sidebar, main, cards) tint exactly as in the mock.
+struct GlassBackdrop: View {
+    @Environment(\.colorScheme) private var scheme
+
+    var body: some View {
+        GeometryReader { geo in
+            let w = geo.size.width, h = geo.size.height
+            ZStack {
+                if scheme == .dark {
+                    LinearGradient(colors: [Color(hex: 0x0A1226), Color(hex: 0x060A14)], startPoint: .topLeading, endPoint: .bottomTrailing)
+                    RadialGradient(colors: [Color(hex: 0x1D3A7A), .clear], center: UnitPoint(x: 0.15, y: 0.2), startRadius: 0, endRadius: max(w, h) * 0.7)
+                    RadialGradient(colors: [Color(hex: 0x7A4E16), .clear], center: UnitPoint(x: 0.85, y: 0.75), startRadius: 0, endRadius: max(w, h) * 0.6)
+                    RadialGradient(colors: [Color(hex: 0x3B2A6E), .clear], center: UnitPoint(x: 0.6, y: 0.1), startRadius: 0, endRadius: max(w, h) * 0.45)
+                    Color(hex: 0x16223A, alpha: 0.62)       // --glass
+                } else {
+                    LinearGradient(colors: [Color(hex: 0xDFE7F7), Color(hex: 0xF3EAD9)], startPoint: .topLeading, endPoint: .bottomTrailing)
+                    RadialGradient(colors: [Color(hex: 0x9FC0FF), .clear], center: UnitPoint(x: 0.15, y: 0.2), startRadius: 0, endRadius: max(w, h) * 0.7)
+                    RadialGradient(colors: [Color(hex: 0xFFD59A), .clear], center: UnitPoint(x: 0.85, y: 0.75), startRadius: 0, endRadius: max(w, h) * 0.6)
+                    Color(hex: 0xF8FAFF, alpha: 0.68)       // --glass (light)
+                }
+            }
+        }
+        .ignoresSafeArea()
+        .accessibilityHidden(true)
     }
 }
 

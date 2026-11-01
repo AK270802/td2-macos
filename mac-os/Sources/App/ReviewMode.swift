@@ -47,8 +47,8 @@ struct ReviewHostView: View {
 
     var body: some View {
         content
-            .background(Palette.canvas)
-            .background(WindowConfigurator(onboarding: isOnboarding))
+            .background(GlassBackdrop())
+            .background(WindowConfigurator(onboarding: isOnboarding, fixedSize: isOnboarding ? Metrics.onboardingWindow : Metrics.mainWindow))
             .preferredColorScheme(ReviewMode.appearance == "dark" ? .dark : .light)
             .onAppear { ReviewMode.scheduleCapture() }
     }

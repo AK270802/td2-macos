@@ -55,6 +55,7 @@ struct MainShellView: View {
             }
             .background(Palette.canvas)
         }
+        .background(GlassBackdrop())
         .environment(navigator)
         .ignoresSafeArea(.container, edges: .top)
         .onAppear {
@@ -187,7 +188,8 @@ struct EffiSidebar: View {
             HStack(spacing: 9) {
                 if !route.isSubItem {
                     Image(systemName: route.symbol)
-                        .font(.system(size: 13, weight: .medium))
+                        .font(.system(size: 13, weight: .regular))
+                        .symbolRenderingMode(.monochrome)
                         .foregroundStyle(Palette.accent)
                         .frame(width: 16)
                 }
@@ -218,11 +220,9 @@ struct EffiSidebar: View {
     }
 
     private var userCard: some View {
-        Menu {
-            if let org = model.user?.organizationName { Text(org) }
-            Button("Account Settings…") { navigator.go(.settings) }
-            Divider()
-            Button("Sign Out") { Task { await model.signOut() } }
+        Button {
+            UserDefaults.standard.set(SettingsRootView.Pane.account.rawValue, forKey: "effilens.settings.pane")
+            navigator.go(.settings)
         } label: {
             HStack(spacing: 9) {
                 InitialsAvatar(initials: model.user?.initials ?? "?", size: 30)
@@ -235,10 +235,17 @@ struct EffiSidebar: View {
             .padding(10)
             .background(Palette.textPrimary.opacity(0.04), in: RoundedRectangle(cornerRadius: 10, style: .continuous))
             .overlay(RoundedRectangle(cornerRadius: 10, style: .continuous).strokeBorder(Palette.hairline))
+            .contentShape(Rectangle())
         }
-        .menuStyle(.borderlessButton)
-        .menuIndicator(.hidden)
-        .accessibilityLabel("Account menu")
+        .buttonStyle(.plain)
+        .contextMenu {
+            if let org = model.user?.organizationName { Text(org) }
+            Button("Account Settings…") { navigator.go(.settings) }
+            Divider()
+            Button("Sign Out") { Task { await model.signOut() } }
+        }
+        .help("Account — right-click for Sign Out")
+        .accessibilityLabel("Account")
     }
 
     @ViewBuilder
@@ -289,7 +296,7 @@ struct ShellHeader: View {
             }
             Spacer()
             SyncIndicator()
-            ToolbarIconButton(symbol: "capsule.portrait.righthalf.filled", help: "Mini timer (⌥⌘M)") { openWindow(id: SceneID.miniTimer) }
+            MiniTimerToolbarButton { openWindow(id: SceneID.miniTimer) }
             ToolbarIconButton(symbol: "bell", help: model.unreadNotifications > 0 ? "Notifications, \(model.unreadNotifications) unread" : "Notifications",
                               showsPip: model.unreadNotifications > 0) { navigator.go(.notifications) }
             Button("+ Apply Leave") { navigator.go(.applyLeave) }
@@ -358,5 +365,23 @@ struct OfflineBanner: View {
             .background(Palette.redFill.opacity(0.12))
             .overlay(alignment: .bottom) { Rectangle().fill(Palette.redFill.opacity(0.3)).frame(height: 1) }
         }
+    }
+}
+
+/// Prototype mini-timer toolbar glyph: a rounded capsule with a dot.
+struct MiniTimerToolbarButton: View {
+    let action: () -> Void
+    var body: some View {
+        Button(action: action) {
+            ZStack(alignment: .leading) {
+                Capsule().strokeBorder(Palette.textSecondary, lineWidth: 1.6).frame(width: 18, height: 10)
+                Circle().fill(Palette.textSecondary).frame(width: 3.5, height: 3.5).padding(.leading, 3.5)
+            }
+            .frame(width: 30, height: 28)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .help("Mini timer (⇧⌘M)")
+        .accessibilityLabel("Mini timer")
     }
 }

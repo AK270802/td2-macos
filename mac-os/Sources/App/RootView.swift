@@ -41,7 +41,7 @@ struct RootView: View {
                 }
             }
         }
-        .background(Palette.canvas)
+        .background(GlassBackdrop())
         .background(WindowConfigurator(onboarding: mode == .onboarding))
         .animation(Motion.quick, value: model.phase)
         .onChange(of: model.phase) { _, phase in
@@ -53,32 +53,40 @@ struct RootView: View {
 
 /// Sizes the hosting window: fixed 820 × 560 for onboarding (as in the
 /// prototype), resizable 1200 × 780 (min 1000 × 560) for the main app.
+/// Sizes are the full window frame — the transparent title bar overlays the
+/// content exactly like the prototype's `.titlebar`.
 struct WindowConfigurator: NSViewRepresentable {
     let onboarding: Bool
+    /// Deterministic size (visual review); always applied.
+    var fixedSize: CGSize?
 
     func makeNSView(context: Context) -> NSView { NSView() }
 
     func updateNSView(_ view: NSView, context: Context) {
         let onboarding = self.onboarding
+        let fixedSize = self.fixedSize
         DispatchQueue.main.async {
             guard let window = view.window else { return }
             window.titlebarAppearsTransparent = true
             window.titleVisibility = .hidden
             window.styleMask.insert(.fullSizeContentView)
             window.isMovableByWindowBackground = onboarding
-            let target = onboarding ? Metrics.onboardingWindow : Metrics.mainWindow
+            let target = fixedSize ?? (onboarding ? Metrics.onboardingWindow : Metrics.mainWindow)
             let minimum = onboarding ? Metrics.onboardingWindow : Metrics.mainWindowMin
-            if onboarding {
+            if onboarding || fixedSize != nil {
                 window.styleMask.remove(.resizable)
             } else {
                 window.styleMask.insert(.resizable)
             }
-            window.contentMinSize = minimum
-            window.contentMaxSize = onboarding ? Metrics.onboardingWindow : CGSize(width: 10_000, height: 10_000)
-            let current = window.contentRect(forFrameRect: window.frame).size
-            let needsResize = onboarding ? current != target : (current.width < minimum.width || current.height < minimum.height || context.coordinator.lastOnboarding == true)
+            window.minSize = fixedSize ?? minimum
+            window.maxSize = (onboarding || fixedSize != nil) ? target : CGSize(width: 10_000, height: 10_000)
+            let current = window.frame.size
+            let leavingOnboarding = context.coordinator.lastOnboarding == true && !onboarding
+            let needsResize = fixedSize != nil || onboarding
+                ? current != target
+                : (current.width < minimum.width || current.height < minimum.height || leavingOnboarding)
             if needsResize {
-                window.setContentSize(target)
+                window.setFrame(NSRect(origin: window.frame.origin, size: target), display: true)
                 window.center()
             }
             context.coordinator.lastOnboarding = onboarding

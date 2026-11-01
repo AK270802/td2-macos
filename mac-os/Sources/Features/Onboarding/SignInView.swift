@@ -61,6 +61,8 @@ struct SignInView: View {
     @Environment(AppModel.self) private var model
     @State private var viewModel = SignInViewModel()
     @FocusState private var focused: Field?
+    @AppStorage(Prefs.rememberMac) private var rememberMac = true
+    @State private var reachable: Bool?
 
     private enum Field { case email, password }
 
@@ -93,6 +95,11 @@ struct SignInView: View {
                 .modifier(EffiFieldBackground(focused: focused == .password))
 
             HStack {
+                Toggle("Remember this Mac", isOn: $rememberMac)
+                    .toggleStyle(.checkbox)
+                    .font(Typo.body)
+                    .foregroundStyle(Palette.textSecondary)
+                    .help("When off, you are signed out the next time EffiLens starts.")
                 Spacer()
                 Button("Forgot password?") { Task { await viewModel.requestReset(model: model) } }
                     .buttonStyle(.plain)
@@ -136,8 +143,12 @@ struct SignInView: View {
             OnboardingFooter(step: .signIn) {
                 if let host = model.environment?.configuration.apiOrigin.host() {
                     HStack(spacing: 6) {
-                        Image(systemName: "server.rack").font(.system(size: 10)).foregroundStyle(Palette.textTertiary)
-                        Text(host).font(Typo.caption).foregroundStyle(Palette.textSecondary)
+                        Circle()
+                            .fill(reachable == true ? Palette.okFill : (reachable == false ? Palette.redFill : Palette.textTertiary))
+                            .frame(width: 7, height: 7)
+                            .shadow(color: reachable == true ? Palette.okFill : .clear, radius: 3)
+                        Text("\(host) · \(reachable == true ? "Connected" : (reachable == false ? "Unreachable" : "Checking…"))")
+                            .font(Typo.caption).foregroundStyle(Palette.textSecondary)
                     }
                     .help("Server this app signs in to")
                 }
@@ -147,6 +158,11 @@ struct SignInView: View {
         .task {
             if let session = model.environment?.session { await viewModel.prefill(from: session) }
             focused = viewModel.email.isEmpty ? .email : .password
+        }
+        .task {
+            // Real reachability: unauthenticated GET /agent/version.
+            guard let environment = model.environment else { return }
+            reachable = (try? await environment.agentAPI.latestVersion()) != nil
         }
     }
 }

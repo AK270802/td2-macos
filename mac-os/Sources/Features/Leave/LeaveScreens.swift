@@ -421,8 +421,8 @@ struct LeaveCalendarCard: View {
     var body: some View {
         Card {
             HStack {
-                (Text(model.month.formatted(.dateTime.month(.wide))) + Text(" \(model.month.formatted(.dateTime.year()))").foregroundColor(Palette.textTertiary))
-                    .font(.system(size: 28))
+                (Text(model.month.formatted(.dateTime.month(.wide))).font(Typo.serif(28))
+                 + Text(" \(model.month.formatted(.dateTime.year()))").font(Typo.serif(28)).foregroundColor(Palette.textTertiary))
                 Spacer()
                 Button("‹") { model.shift(-1) }.buttonStyle(.effi).accessibilityLabel("Previous month")
                 Button("Today") { model.goToday() }.buttonStyle(.effi)
@@ -436,9 +436,16 @@ struct LeaveCalendarCard: View {
                     EventChip(text: "● Holiday", kind: .holiday)
                 }
             }
-            LoadStateView(state: model.data, retry: { Task { await model.load() } }) { cal in
-                MonthGrid(month: model.month, days: cal.days, showLeave: showLeave)
+            if case .failed(let error) = model.data {
+                HStack(spacing: 6) {
+                    Image(systemName: "exclamationmark.triangle").foregroundStyle(Palette.danger)
+                    Text("Leave and holidays couldn't load — \(error.userMessage)").foregroundStyle(Palette.textSecondary)
+                    Button("Retry") { Task { await model.load() } }.buttonStyle(.plain).foregroundStyle(Palette.accentText)
+                }
+                .font(Typo.caption)
             }
+            // The month grid is the calendar itself; server data only adds events.
+            MonthGrid(month: model.month, days: model.data.value?.days ?? [], showLeave: showLeave)
         }
         .task(id: model.month) { await model.load() }
     }
@@ -487,26 +494,37 @@ struct LeaveCalendarView: View {
 }
 
 /// `.cal` — 7 columns, 4 pt gap, weekday headers, day cells (min 74, radius 8).
+/// Dates come from the calendar; `days` (server) only adds holiday/leave events.
 struct MonthGrid: View {
     let month: Date
     let days: [LeaveCalendarDay]
     var showLeave = true
 
+    private var calendar: Calendar { Calendar.current }
+
     private var leading: Int {
-        let cal = Calendar.current
-        return (cal.component(.weekday, from: month) - cal.firstWeekday + 7) % 7
+        (calendar.component(.weekday, from: month) - calendar.firstWeekday + 7) % 7
     }
 
     private var symbols: [String] {
-        let cal = Calendar.current
-        let all = cal.shortStandaloneWeekdaySymbols
-        let pivot = max(0, min(all.count, cal.firstWeekday - 1))
+        let all = calendar.shortStandaloneWeekdaySymbols
+        let pivot = max(0, min(all.count, calendar.firstWeekday - 1))
         return Array(all[pivot...]) + Array(all[..<pivot])
+    }
+
+    private var dates: [Date] {
+        guard let range = calendar.range(of: .day, in: .month, for: month) else { return [] }
+        return range.compactMap { calendar.date(byAdding: .day, value: $0 - 1, to: month) }
+    }
+
+    private var events: [CalendarDate: LeaveCalendarDay] {
+        Dictionary(days.map { ($0.date, $0) }, uniquingKeysWith: { first, _ in first })
     }
 
     private var columns: [GridItem] { Array(repeating: GridItem(.flexible(), spacing: 4), count: 7) }
 
     var body: some View {
+        let lookup = events
         LazyVGrid(columns: columns, spacing: 4) {
             ForEach(Array(symbols.enumerated()), id: \.offset) { _, s in
                 Text(s).font(.system(size: 10.5, weight: .semibold)).foregroundStyle(Palette.textTertiary).padding(4)
@@ -514,31 +532,39 @@ struct MonthGrid: View {
             ForEach(0..<leading, id: \.self) { _ in
                 RoundedRectangle(cornerRadius: Radius.row).fill(Palette.textPrimary.opacity(0.025)).frame(minHeight: 74).opacity(0.3)
             }
-            ForEach(days, id: \.date) { day in DayCell(day: day, showLeave: showLeave) }
+            ForEach(dates, id: \.self) { date in
+                let day = CalendarDate(date)
+                DayCell(date: day,
+                        isWeekend: calendar.isDateInWeekend(date),
+                        event: lookup[day],
+                        showLeave: showLeave)
+            }
         }
     }
 }
 
 private struct DayCell: View {
-    let day: LeaveCalendarDay
+    let date: CalendarDate
+    let isWeekend: Bool
+    let event: LeaveCalendarDay?
     var showLeave = true
 
-    private var isToday: Bool { day.date == CalendarDate(Date()) }
+    private var isToday: Bool { date == CalendarDate(Date()) }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 3) {
-            Text("\(day.date.day)").font(.system(size: 11.5, design: .monospaced))
+            Text("\(date.day)").font(.system(size: 11.5, design: .monospaced))
                 .foregroundStyle(isToday ? Palette.textPrimary : Palette.textTertiary)
-            if let name = day.holidayName, day.isHoliday { EventChip(text: name, kind: .holiday) }
-            if showLeave, day.isLeave {
-                let pending = LeaveStatus(rawValue: day.leaveStatus ?? "")?.isPending == true
-                EventChip(text: "You · \(day.isHalfDay ? "Half day" : (pending ? "Pending" : "Leave"))", kind: pending ? .pending : .me)
+            if let event, event.isHoliday, let name = event.holidayName { EventChip(text: name, kind: .holiday) }
+            if showLeave, let event, event.isLeave {
+                let pending = LeaveStatus(rawValue: event.leaveStatus ?? "")?.isPending == true
+                EventChip(text: "You · \(event.isHalfDay ? "Half day" : (pending ? "Pending" : "Leave"))", kind: pending ? .pending : .me)
             }
             Spacer(minLength: 0)
         }
         .padding(6)
         .frame(maxWidth: .infinity, minHeight: 74, alignment: .topLeading)
-        .background(Palette.textPrimary.opacity(day.isWeekend ? 0.01 : 0.025), in: RoundedRectangle(cornerRadius: Radius.row, style: .continuous))
+        .background(Palette.textPrimary.opacity(isWeekend ? 0.01 : 0.025), in: RoundedRectangle(cornerRadius: Radius.row, style: .continuous))
         .overlay(RoundedRectangle(cornerRadius: Radius.row, style: .continuous).strokeBorder(isToday ? Palette.accent : Palette.hairline, lineWidth: isToday ? 2 : 1))
         .accessibilityElement(children: .combine)
     }

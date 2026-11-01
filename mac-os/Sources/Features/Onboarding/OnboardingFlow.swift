@@ -22,9 +22,9 @@ struct OnboardingWindow<Content: View>: View {
             VStack(alignment: .leading, spacing: 0) { content }
                 .padding(EdgeInsets(top: 54, leading: 44, bottom: 28, trailing: 44))
                 .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-                .background(Palette.surfaceRaised)
         }
-        .frame(width: Metrics.onboardingWindow.width, height: Metrics.onboardingWindow.height)
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .background(GlassBackdrop())
         .ignoresSafeArea()
     }
 }
@@ -37,27 +37,30 @@ struct OnboardingArtPanel: View {
 
     var body: some View {
         ZStack(alignment: .bottomLeading) {
-            LinearGradient(colors: [Color(hex: 0x0A2A55), Color(hex: 0x020E22)], startPoint: .topLeading, endPoint: .bottomTrailing)
+            LinearGradient(colors: [Color(hex: 0x122244), Color(hex: 0x080E1C)], startPoint: UnitPoint(x: 0.2, y: 0), endPoint: UnitPoint(x: 0.8, y: 1))
             // Concentric ring (520 pt, left −120, top 120) with two faint halos.
             Circle()
-                .strokeBorder(Brand.amber.opacity(0.25), lineWidth: 1)
-                .background(Circle().stroke(Brand.amber.opacity(0.03), lineWidth: 80))
+                .strokeBorder(Palette.accentHighlight.opacity(0.25), lineWidth: 1)
+                .background(Circle().stroke(Palette.accentHighlight.opacity(0.03), lineWidth: 80))
+                .background(Circle().stroke(Palette.accentHighlight.opacity(0.025), lineWidth: 180))
                 .frame(width: 520, height: 520)
                 .position(x: -120 + 260, y: 120 + 260)
             // Orb (220 pt at 60, 150).
             Circle()
-                .fill(RadialGradient(colors: [Color(hex: 0xFFD36B), Brand.amber, Color(hex: 0x5A3A0E)],
-                                     center: UnitPoint(x: 0.35, y: 0.3), startRadius: 4, endRadius: 150))
+                .fill(RadialGradient(stops: [.init(color: Palette.accentHighlight, location: 0),
+                                             .init(color: Palette.accent, location: 0.45),
+                                             .init(color: Color(hex: 0x5A3A0E), location: 0.8)],
+                                     center: UnitPoint(x: 0.35, y: 0.3), startRadius: 0, endRadius: 150))
                 .frame(width: 220, height: 220)
-                .shadow(color: Brand.amber.opacity(0.45), radius: 60)
+                .shadow(color: Palette.accent.opacity(0.45), radius: 60)
                 .position(x: 60 + 110, y: 150 + 110)
                 .offset(y: floating ? -14 : 0)
                 .animation(reduceMotion ? nil : .easeInOut(duration: 3).repeatForever(autoreverses: true), value: floating)
             VStack(alignment: .leading, spacing: 8) {
-                (Text("See your\n") + Text("work").foregroundColor(Brand.amber) + Text(" clearly."))
-                    .font(.system(size: 36, weight: .regular))
+                (Text("See your\n").font(Typo.serif(36))
+                 + Text("work").font(Typo.serifItalic(36))
+                 + Text(" clearly.").font(Typo.serif(36)))
                     .foregroundStyle(.white)
-                    .lineSpacing(-2)
                 Text("Time, focus and leave — beautifully in one place.")
                     .font(Typo.body)
                     .foregroundStyle(.white.opacity(0.6))
@@ -113,7 +116,7 @@ struct OnboardingHeading: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
-            HeroTitle(prefix: prefix, emphasis: emphasis, suffix: suffix, font: Typo.display)
+            HeroTitle(prefix: prefix, emphasis: emphasis, suffix: suffix, size: 34)
                 .fixedSize(horizontal: false, vertical: true)
             Text(subtitle).font(Typo.body).foregroundStyle(Palette.textSecondary)
         }
@@ -217,7 +220,7 @@ struct SetupStepView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
-            HeroTitle(prefix: "Hi \(firstName) — let’s set up\nthis ", emphasis: "Mac", suffix: ".", font: Typo.display)
+            HeroTitle(prefix: "Hi \(firstName) — let’s set up\nthis ", emphasis: "Mac", suffix: ".", size: 34)
                 .fixedSize(horizontal: false, vertical: true)
             Text("We’re registering this Mac with \(model.user?.organizationName ?? "your organisation").")
                 .font(Typo.body).foregroundStyle(Palette.textSecondary).padding(.top, 8)

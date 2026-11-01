@@ -40,6 +40,11 @@ targets:
       - path: Sources/DesignSystem
       - path: Sources/Features
       - path: Resources/Assets.xcassets
+      # Instrument Serif (OFL) — prototype display face; folder copied to
+      # Contents/Resources/Fonts and registered via ATSApplicationFontsPath.
+      - path: Resources/Fonts
+        type: folder
+        buildPhase: resources
     dependencies:
       - package: EffiLensKit
         product: EffiLensKit

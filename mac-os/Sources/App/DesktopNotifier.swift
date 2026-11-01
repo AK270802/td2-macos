@@ -13,6 +13,8 @@ enum Prefs {
     static let appearance = "effilens.prefs.appearance"          // system | light | dark
     static let menuBarTimer = "effilens.prefs.menuBarTimer"
     static let confirmQuitWhileTracking = "effilens.prefs.confirmQuit"
+    /// Sign-in "Remember this Mac": when false the session is discarded at next launch.
+    static let rememberMac = "effilens.prefs.rememberMac"
     /// go-agent `notification_interval_min`: 0 = never; default 15.
     static let reminderInterval = "effilens.prefs.reminderIntervalMin"
 

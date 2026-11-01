@@ -42,58 +42,59 @@ enum Brand {
 }
 
 enum Palette {
-    // MARK: Accent (BRAND_SPEC.md)
-    static let accent = Color(light: Brand.portalGold, dark: Brand.amber)
-    /// Top stop of the primary-button / ring gradient (prototype gold2 → gold).
-    static let accentHighlight = Color(light: Color(hex: 0xE2B25C), dark: Color(hex: 0xFFC94A))
-    /// Text on an accent fill (prototype `.btn.pri` colour #1b1405).
+    // MARK: Accent — prototype --gold / --gold2 (user instruction 2026-11-02:
+    // "match exactly as prototype"; supersedes BRAND_SPEC accent hexes).
+    static let accent = Color(hex: 0xD5A04A)
+    /// Top stop of the primary-button / ring gradient (--gold2).
+    static let accentHighlight = Color(hex: 0xF0C779)
+    /// Text on an accent fill (`.btn.pri` colour #1b1405).
     static let onAccent = Color(hex: 0x1B1405)
-    /// Selection / soft accent fill (prototype `.sb-i.on` = accent 22 %).
-    static let accentSoft = Color(light: Brand.portalGold.opacity(0.18), dark: Brand.amber.opacity(0.20))
-    static let accentText = Color(light: Color(hex: 0x9A6B17), dark: Color(hex: 0xFFC94A))
+    /// Selection fill (`.sb-i.on` = rgba(213,160,74,.22)).
+    static let accentSoft = Color(hex: 0xD5A04A, alpha: 0.22)
+    /// Emphasised text (`<em>`, links) = --gold2 in both appearances.
+    static let accentText = Color(hex: 0xF0C779)
     static var accentGradient: LinearGradient {
         LinearGradient(colors: [accentHighlight, accent], startPoint: .top, endPoint: .bottom)
     }
 
-    // MARK: Surfaces (prototype --midnight/--navy/--panel, .main, .sidebar, .toolbar, .card)
-    /// Main content background (`.main`).
-    static let canvas = Color(light: Color(hex: 0xF6F7FB), dark: Color(hex: 0x0B1322))
-    /// Sidebar background (`.sidebar`).
-    static let sidebar = Color(light: Color(hex: 0xE9EDF4), dark: Color(hex: 0x0E1729))
-    /// Toolbar band (`.toolbar`).
-    static let toolbar = Color(light: Color(hex: 0xFBFCFE), dark: Color(hex: 0x111C33))
-    /// Card fill (`.card`).
-    static let surface = Color(light: .white, dark: Color(hex: 0x142035))
-    /// Raised panels, popovers, sheets (`--panel`).
-    static let surfaceRaised = Color(light: .white, dark: Color(hex: 0x1A2944))
-    /// Inset wells: fields, segmented track, list rows (`rgba(0,0,0,.25)` / white).
-    static let inset = Color(light: Color(hex: 0xF3F5F9), dark: Color(hex: 0x0A111F))
-    /// Settings group fill (`.set-group`).
-    static let group = Color(light: .white, dark: Color(hex: 0x131D31))
+    // MARK: Surfaces — translucent layers over `GlassBackdrop` (prototype
+    // .win glass, .sidebar, .main, .toolbar, .card, .set-group).
+    static let canvas = Color(light: Color(hex: 0xFAFBFE, alpha: 0.70), dark: Color(hex: 0x080E1C, alpha: 0.55))
+    static let sidebar = Color(light: Color(hex: 0xEBEEF5, alpha: 0.45), dark: Color(hex: 0x0A1224, alpha: 0.35))
+    static let toolbar = Color(light: Color.white.opacity(0.5), dark: Color(hex: 0x101B32, alpha: 0.35))
+    /// Card fill (`.card`: white 85 % light; white 5.5 %→2 % gradient dark).
+    static let surface = Color(light: Color.white.opacity(0.85), dark: Color.white.opacity(0.035))
+    /// Popovers, sheets, alerts (`--panel` / `.alert`).
+    static let surfaceRaised = Color(light: Color(hex: 0xF5F5F8), dark: Color(hex: 0x1A2944))
+    /// Inset wells (`.field`: rgba(0,0,0,.25) dark / white light).
+    static let inset = Color(light: .white, dark: Color.black.opacity(0.25))
+    /// Settings group (`.set-group` rgba(255,255,255,.035)).
+    static let group = Color(light: Color.white.opacity(0.6), dark: Color.white.opacity(0.035))
 
     // MARK: Text (--text / --text2 / --text3)
     static let textPrimary = Color(light: Color(hex: 0x141B2C), dark: Color(hex: 0xEEF2FA))
     static let textSecondary = Color(light: Color(hex: 0x141B2C, alpha: 0.68), dark: Color(hex: 0xEBF0FA, alpha: 0.66))
-    static let textTertiary = Color(light: Color(hex: 0x141B2C, alpha: 0.45), dark: Color(hex: 0xEBF0FA, alpha: 0.42))
+    static let textTertiary = Color(light: Color(hex: 0x141B2C, alpha: 0.42), dark: Color(hex: 0xEBF0FA, alpha: 0.42))
 
     // MARK: Lines (--line / --line2)
     static let hairline = Color(light: Color.black.opacity(0.07), dark: Color.white.opacity(0.08))
     static let divider = Color(light: Color.black.opacity(0.12), dark: Color.white.opacity(0.14))
 
-    // MARK: Status (prototype --ok / --amber / --red / --blue / --violet; light shades deepened for contrast)
-    static let success = Color(light: Color(hex: 0x0F8F6E), dark: Color(hex: 0x35C9A0))
-    static let warning = Color(light: Color(hex: 0xA66F00), dark: Color(hex: 0xF7C95B))
-    static let danger = Color(light: Color(hex: 0xD93A33), dark: Color(hex: 0xFF8A84))
-    static let info = Color(light: Color(hex: 0x2F6FD6), dark: Color(hex: 0x7FB0FF))
-    static let violet = Color(light: Color(hex: 0x7A55D0), dark: Color(hex: 0xC3A6FF))
+    // MARK: Status — prototype pill text colours (same in both appearances)
+    static let success = Color(hex: 0x35C9A0)       // --ok
+    static let warning = Color(hex: 0xF7C95B)       // .pill.wait
+    static let danger = Color(hex: 0xFF8A84)        // .pill.no
+    static let info = Color(hex: 0x7FB0FF)          // .pill.blue
+    static let violet = Color(hex: 0xC3A6FF)        // .pill.vio
     /// Solid status fills (dots, toggles, badges).
     static let okFill = Color(hex: 0x35C9A0)
     static let redFill = Color(hex: 0xFF5F57)
     static let blueFill = Color(hex: 0x4D91FF)
     static let violetFill = Color(hex: 0xA17BEE)
+    static let amberFill = Color(hex: 0xFEBC2E)
 
     /// Chart series order.
-    static let chartSeries: [Color] = [accent, blueFill, okFill, violetFill, redFill]
+    static let chartSeries: [Color] = [blueFill, violetFill, okFill, accent, textTertiary]
 }
 
 /// Spacing scale (prototype paddings: 4 · 8 · 10 · 12 · 14 · 16 · 22 · 24).
@@ -135,9 +136,13 @@ enum Metrics {
 
 /// Type scale — SF Pro / SF Mono at the prototype's sizes.
 enum Typo {
-    static let hero = Font.system(size: 38, weight: .regular)            // .hero-t
-    static let display = Font.system(size: 34, weight: .regular)         // onboarding h1
-    static let pageTitle = Font.system(size: 30, weight: .regular)       // detail / member / about titles
+    // Display face: Instrument Serif (OFL, bundled in Resources/Fonts,
+    // registered via ATSApplicationFontsPath) — prototype `--serif`.
+    static func serif(_ size: CGFloat) -> Font { .custom("InstrumentSerif-Regular", size: size) }
+    static func serifItalic(_ size: CGFloat) -> Font { .custom("InstrumentSerif-Italic", size: size) }
+    static let hero = serif(38)               // .hero-t
+    static let display = serif(34)            // onboarding h1
+    static let pageTitle = serif(30)          // detail / member titles
     static let title = Font.system(size: 20, weight: .semibold)
     static let toolbarTitle = Font.system(size: 15, weight: .bold)
     static let heading = Font.system(size: 15, weight: .semibold)
