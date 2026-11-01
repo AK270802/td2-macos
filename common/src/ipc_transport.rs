@@ -149,19 +149,26 @@ pub mod native {
     /// Writes a fresh 256-bit secret (0600, refusing to follow symlinks).
     #[cfg(unix)]
     pub fn rotate_token() -> Result<String> {
+        rotate_token_at(&token_path())
+    }
+
+    /// `rotate_token` against an explicit path (tests use a temp directory).
+    /// A pre-existing file or symlink at `path` is unlinked (never followed)
+    /// and the new file is created exclusively with `O_NOFOLLOW`.
+    #[cfg(unix)]
+    pub fn rotate_token_at(path: &std::path::Path) -> Result<String> {
         use std::io::Write;
         use std::os::unix::fs::OpenOptionsExt;
         let mut bytes = [0u8; 32];
         getrandom::getrandom(&mut bytes).map_err(|e| anyhow!("os rng failed: {e}"))?;
         let token = hex::encode(bytes);
-        let path = token_path();
-        let _ = std::fs::remove_file(&path);
+        let _ = std::fs::remove_file(path);
         let mut f = std::fs::OpenOptions::new()
             .write(true)
             .create_new(true)
             .mode(0o600)
             .custom_flags(0x0100) // O_NOFOLLOW on Darwin
-            .open(&path)
+            .open(path)
             .context("create ipc.token")?;
         f.write_all(token.as_bytes())?;
         f.sync_all()?;
@@ -169,9 +176,33 @@ pub mod native {
     }
 
     pub fn read_token() -> Option<String> {
-        let t = std::fs::read_to_string(token_path()).ok()?;
+        read_token_at(&token_path())
+    }
+
+    /// Reads a token file, rejecting symlinks, files readable by group/other
+    /// and files owned by another user (mirrors the Swift client's checks).
+    pub fn read_token_at(path: &std::path::Path) -> Option<String> {
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::MetadataExt;
+            let meta = std::fs::symlink_metadata(path).ok()?;
+            if !meta.file_type().is_file() || meta.mode() & 0o077 != 0 {
+                return None;
+            }
+            // SAFETY: getuid has no preconditions and cannot fail.
+            if meta.uid() != unsafe { sys_getuid() } {
+                return None;
+            }
+        }
+        let t = std::fs::read_to_string(path).ok()?;
         let t = t.trim().to_string();
         (t.len() == 64 && t.chars().all(|c| c.is_ascii_hexdigit())).then_some(t)
+    }
+
+    #[cfg(unix)]
+    extern "C" {
+        #[link_name = "getuid"]
+        fn sys_getuid() -> u32;
     }
 
     /// Constant-time comparison of the presented secret.
@@ -188,9 +219,15 @@ pub mod native {
     /// only if nothing answers on it.
     #[cfg(unix)]
     pub fn bind_listener() -> Result<tokio::net::UnixListener> {
-        use std::os::unix::fs::PermissionsExt;
         ensure_private_dir()?;
-        let path = socket_path();
+        bind_listener_at(&socket_path())
+    }
+
+    /// `bind_listener` against an explicit path. Must run inside a Tokio runtime.
+    #[cfg(unix)]
+    pub fn bind_listener_at(path: &std::path::Path) -> Result<tokio::net::UnixListener> {
+        use std::os::unix::fs::PermissionsExt;
+        let path = path.to_path_buf();
         if path.exists() {
             if std::os::unix::net::UnixStream::connect(&path).is_ok() {
                 return Err(anyhow!("another EffiLens agent is listening"));
@@ -272,6 +309,115 @@ pub mod native {
     #[cfg(test)]
     mod tests {
         use super::token_matches;
+        #[cfg(unix)]
+        use super::{bind_listener_at, read_bounded_line, read_token_at, rotate_token_at, MAX_LINE_BYTES};
+        #[cfg(unix)]
+        use tokio::io::BufReader;
+
+        #[cfg(unix)]
+        fn temp_dir(tag: &str) -> std::path::PathBuf {
+            use std::os::unix::fs::PermissionsExt;
+            // Short path: sockaddr_un is limited to 104 bytes on macOS.
+            let id = uuid::Uuid::new_v4().simple().to_string();
+            let d = std::path::PathBuf::from("/tmp").join(format!("el-{tag}-{}", &id[..8]));
+            std::fs::create_dir_all(&d).unwrap();
+            std::fs::set_permissions(&d, std::fs::Permissions::from_mode(0o700)).unwrap();
+            d
+        }
+
+        #[cfg(unix)]
+        #[test]
+        fn token_file_is_private_and_rotates() {
+            use std::os::unix::fs::PermissionsExt;
+            let d = temp_dir("tok");
+            let p = d.join("ipc.token");
+            let a = rotate_token_at(&p).unwrap();
+            assert_eq!(std::fs::metadata(&p).unwrap().permissions().mode() & 0o777, 0o600);
+            assert_eq!(read_token_at(&p).as_deref(), Some(a.as_str()));
+            let b = rotate_token_at(&p).unwrap();
+            assert_ne!(a, b, "restart must rotate the secret");
+            assert_eq!(read_token_at(&p).as_deref(), Some(b.as_str()));
+            let _ = std::fs::remove_dir_all(&d);
+        }
+
+        #[cfg(unix)]
+        #[test]
+        fn token_rejects_loose_permissions() {
+            use std::os::unix::fs::PermissionsExt;
+            let d = temp_dir("perm");
+            let p = d.join("ipc.token");
+            rotate_token_at(&p).unwrap();
+            std::fs::set_permissions(&p, std::fs::Permissions::from_mode(0o644)).unwrap();
+            assert!(read_token_at(&p).is_none());
+            let _ = std::fs::remove_dir_all(&d);
+        }
+
+        #[cfg(unix)]
+        #[test]
+        fn token_symlink_is_rejected_and_never_followed() {
+            use std::os::unix::fs::PermissionsExt;
+            let d = temp_dir("sym");
+            let victim = d.join("victim");
+            std::fs::write(&victim, "a".repeat(64)).unwrap();
+            std::fs::set_permissions(&victim, std::fs::Permissions::from_mode(0o600)).unwrap();
+            let p = d.join("ipc.token");
+            std::os::unix::fs::symlink(&victim, &p).unwrap();
+            assert!(read_token_at(&p).is_none(), "symlinked token must be refused");
+            rotate_token_at(&p).unwrap();
+            assert_eq!(std::fs::read_to_string(&victim).unwrap(), "a".repeat(64), "symlink target must be untouched");
+            assert!(!std::fs::symlink_metadata(&p).unwrap().file_type().is_symlink());
+            let _ = std::fs::remove_dir_all(&d);
+        }
+
+        #[cfg(unix)]
+        #[tokio::test]
+        async fn stale_socket_is_recovered_live_socket_is_not() {
+            use std::os::unix::fs::PermissionsExt;
+            let d = temp_dir("sock");
+            let p = d.join("agent.sock");
+            // Stale: a socket file nobody listens on any more.
+            drop(std::os::unix::net::UnixListener::bind(&p).unwrap());
+            assert!(p.exists());
+            let live = bind_listener_at(&p).expect("stale socket must be replaced");
+            assert_eq!(std::fs::metadata(&p).unwrap().permissions().mode() & 0o777, 0o600);
+            // Live: a second instance must refuse to steal the socket.
+            assert!(bind_listener_at(&p).is_err());
+            drop(live);
+            let _ = std::fs::remove_dir_all(&d);
+        }
+
+        #[cfg(unix)]
+        #[tokio::test]
+        async fn bounded_line_reader() {
+            let ok = b"{\"cmd\":\"ping\"}\n".to_vec();
+            let mut r = BufReader::new(&ok[..]);
+            let line = read_bounded_line(&mut r, MAX_LINE_BYTES).await.unwrap().unwrap();
+            assert_eq!(line.trim(), "{\"cmd\":\"ping\"}");
+            assert!(read_bounded_line(&mut r, MAX_LINE_BYTES).await.unwrap().is_none(), "EOF");
+
+            let big = vec![b'x'; (MAX_LINE_BYTES as usize) + 10];
+            let mut r = BufReader::new(&big[..]);
+            assert!(read_bounded_line(&mut r, MAX_LINE_BYTES).await.is_err(), "oversized must fail");
+
+            let bad = vec![0xffu8, 0xfe, b'\n'];
+            let mut r = BufReader::new(&bad[..]);
+            assert!(read_bounded_line(&mut r, MAX_LINE_BYTES).await.is_err(), "non-UTF-8 must fail");
+        }
+
+        #[test]
+        fn invalid_json_and_protocol_shape() {
+            assert!(serde_json::from_str::<super::IpcRequest>("not json").is_err());
+            let r: super::IpcRequest =
+                serde_json::from_str(r#"{"cmd":"get_state","payload":null,"auth":"ab"}"#).unwrap();
+            assert_eq!(r.cmd, "get_state");
+            assert_eq!(r.auth.as_deref(), Some("ab"));
+            let unauthenticated: super::IpcRequest = serde_json::from_str(r#"{"cmd":"ping"}"#).unwrap();
+            assert!(unauthenticated.auth.is_none());
+            assert!(!token_matches(&"a".repeat(64), unauthenticated.auth.as_deref()));
+            let resp = serde_json::to_value(super::IpcResponse::err("unauthorized")).unwrap();
+            assert_eq!(resp["ok"], false);
+            assert_eq!(resp["error"], "unauthorized");
+        }
 
         #[test]
         fn token_comparison() {

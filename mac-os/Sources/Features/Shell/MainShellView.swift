@@ -16,7 +16,13 @@ struct MainShellView: View {
             detail(for: selection ?? .dashboard)
                 .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
                 .background(Palette.canvas)
-                .safeAreaInset(edge: .top, spacing: 0) { PermissionsBanner() }
+                .safeAreaInset(edge: .top, spacing: 0) {
+                    VStack(spacing: 0) {
+                        OfflineBanner()
+                        PermissionsBanner()
+                    }
+                }
+                .id(selection ?? .dashboard)
                 .navigationTitle((selection ?? .dashboard).title)
                 .toolbar { ShellToolbar(unread: model.unreadNotifications, selection: $selection) }
         }
@@ -25,6 +31,16 @@ struct MainShellView: View {
         }
         .onChange(of: selection) { _, newValue in
             if let newValue { storedRoute = newValue.rawValue }
+        }
+        .alert(
+            "Tracking agent",
+            isPresented: Binding(get: { model.agentCommandError != nil }, set: { if !$0 { model.agentCommandError = nil } }),
+            presenting: model.agentCommandError
+        ) { _ in
+            Button("Reconnect") { model.restartAgentConnection() }
+            Button("OK", role: .cancel) {}
+        } message: { error in
+            Text(error.userMessage)
         }
     }
 
@@ -36,8 +52,40 @@ struct MainShellView: View {
                 DashboardView(environment: environment, onNavigate: { selection = $0 })
             case .leaveOverview:
                 LeaveOverviewView(environment: environment, onNavigate: { selection = $0 })
-            default:
-                ScheduledScreenView(route: route)
+            case .tracker:
+                TrackerView(environment: environment)
+            case .projects:
+                ProjectsView(environment: environment)
+            case .tasks:
+                TasksView(environment: environment)
+            case .history:
+                HistoryView(environment: environment)
+            case .manualEntry:
+                ManualEntryView(environment: environment)
+            case .applyLeave:
+                ApplyLeaveView(environment: environment, onNavigate: { selection = $0 })
+            case .myRequests:
+                LeaveRequestsView(environment: environment, ownUserId: model.user?.id)
+            case .leaveCalendar:
+                LeaveCalendarView(environment: environment)
+            case .leaveBalance:
+                LeaveBalanceView(environment: environment)
+            case .holidays:
+                HolidaysView(environment: environment)
+            case .team:
+                TeamView(environment: environment)
+            case .approvals:
+                ApprovalsView(environment: environment, me: model.user?.id, role: model.role)
+            case .reports:
+                ReportsView(environment: environment)
+            case .notifications:
+                NotificationsView(environment: environment)
+            case .activity:
+                ActivityView(environment: environment)
+            case .settings:
+                SettingsRootView(pane: .general)
+            case .about:
+                SettingsRootView(pane: .about)
             }
         }
     }
@@ -169,6 +217,27 @@ struct SyncIndicator: View {
         case .unavailable, .unknown:
             StatusPill(text: "Agent offline", tone: .neutral)
                 .help("The EffiLens tracking agent is not running. Time tracking is unavailable; everything else works.")
+        }
+    }
+}
+
+/// Shown when the agent reports it can't reach the server. Activity keeps
+/// being recorded locally and syncs automatically when the network returns.
+struct OfflineBanner: View {
+    @Environment(AppModel.self) private var model
+
+    var body: some View {
+        if let sync = model.syncStatus, !sync.connected, model.isAgentConnected {
+            HStack(spacing: Space.m) {
+                Image(systemName: "wifi.slash").foregroundStyle(Palette.danger)
+                Text("Offline — \(sync.pendingEvents) activity record(s) saved on this Mac will sync when the connection returns.")
+                    .font(Typo.body)
+                Spacer()
+                Button("Retry Now") { Task { await model.runAgent { try await $0.syncNow() } } }
+            }
+            .padding(.horizontal, Space.l)
+            .padding(.vertical, Space.s)
+            .background(Palette.danger.opacity(0.10))
         }
     }
 }

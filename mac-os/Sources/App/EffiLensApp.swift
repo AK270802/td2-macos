@@ -1,9 +1,13 @@
+import AppKit
 import SwiftUI
 import EffiLensKit
 
 @main
 struct EffiLensApp: App {
+    @NSApplicationDelegateAdaptor(AppDelegate.self) private var appDelegate
     @State private var model: AppModel
+    @AppStorage(Prefs.appearance) private var appearance = "system"
+    @AppStorage(Prefs.menuBarTimer) private var menuBarTimer = true
 
     init() {
         do {
@@ -20,53 +24,79 @@ struct EffiLensApp: App {
             RootView()
                 .environment(model)
                 .frame(minWidth: 960, minHeight: 620)
-                .task { await model.start() }
+                .effiLensAppearance(appearance)
+                .task {
+                    appDelegate.model = model
+                    await model.start()
+                }
         }
         .defaultSize(width: 1200, height: 780)
         .windowToolbarStyle(.unified(showsTitle: false))
         .commands { EffiLensCommands(model: model) }
 
+        Window("Mini Timer", id: SceneID.miniTimer) {
+            MiniTimerView()
+                .environment(model)
+                .effiLensAppearance(appearance)
+        }
+        .windowStyle(.hiddenTitleBar)
+        .windowResizability(.contentSize)
+        .defaultPosition(.topTrailing)
+
         MenuBarExtra {
             MenuBarPopover()
                 .environment(model)
+                .effiLensAppearance(appearance)
         } label: {
-            MenuBarLabel()
+            MenuBarLabel(showsTimer: menuBarTimer)
                 .environment(model)
         }
         .menuBarExtraStyle(.window)
 
         Settings {
-            SettingsPlaceholderView()
+            SettingsRootView()
                 .environment(model)
+                .effiLensAppearance(appearance)
         }
     }
 }
 
 enum SceneID {
     static let main = "main"
+    static let miniTimer = "mini-timer"
 }
 
 /// App menu commands (prototype: File / View / Tracking menus).
 struct EffiLensCommands: Commands {
     let model: AppModel
+    @Environment(\.openWindow) private var openWindow
 
     var body: some Commands {
         CommandGroup(after: .appInfo) {
-            Button("Check for Updates…") {}
-                .disabled(true) // Milestone 7 (update architecture: BUILD_AND_RELEASE.md)
+            Button("Check for Updates…") {
+                UpdateDialog.present(version: model.environment?.configuration.appVersion ?? "—")
+            }
         }
         CommandMenu("Tracking") {
             Button("Start / Pause") {
-                Task { try? await model.environment?.agent?.togglePlayPause() }
+                Task { await model.runAgent { try await $0.togglePlayPause() } }
             }
             .keyboardShortcut(.space, modifiers: [.control, .option])
             .disabled(!model.isAgentConnected)
 
             Button("Stop") {
-                Task { try? await model.environment?.agent?.stopTracking() }
+                Task { await model.runAgent { try await $0.stopTracking() } }
             }
             .keyboardShortcut("s", modifiers: [.control, .option])
             .disabled(!model.isAgentConnected)
+
+            Divider()
+            Button("Sync Now") {
+                Task { await model.runAgent { try await $0.syncNow() } }
+            }
+            .disabled(!model.isAgentConnected)
+            Button("Show Mini Timer") { openWindow(id: SceneID.miniTimer) }
+                .keyboardShortcut("m", modifiers: [.command, .shift])
         }
         CommandGroup(replacing: .newItem) {}
     }

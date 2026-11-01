@@ -92,7 +92,7 @@ No data migration from the legacy DB: unsynced legacy events must be flushed by 
 
 ## 8. Offline sync
 
-Unchanged agentd behaviour: 500-event batches, `task_time_logs` included, permanent 4xx dropped / transient retried. ⚠️ Audit risk: 401 during a batch is classified permanent → events marked synced. Native build fixes this under the feature flag by treating 401 as retryable after token refresh.
+Unchanged agentd behaviour: 500-event batches, `task_time_logs` included, permanent 4xx dropped / transient retried with backoff `min(2^n·60,1800)` s. **401 fix (implemented):** `common::api::is_permanent_failure` excludes 401 under `macos-native`, so a 401 that survives the one-shot refresh is retried with backoff instead of marking events synced. Batches that exhaust retries stay unsynced (`sync_queue.status='failed'`) and are re-batched later — never dropped. Default builds keep the old classification (unit-tested both ways).
 
 ## 9. Implementation status & deviations (Milestone 3, commit dbd4585+)
 
@@ -111,3 +111,6 @@ Deviations from the plan (honest list):
 | flock | `std::fs::File::try_lock` (Rust ≥ 1.89) | No extra crates |
 
 IPC commands added: `set_session` (validates UUIDs, refuses an `api_base_url` different from the agent's own API, wipes the previous account's local data on account switch), `clear_session` (stop → `clear_local_activity_data` → forget token), `get_permissions`. The pre-existing `clear_local_data` command is unchanged.
+
+### IPC security tests (common, `--features macos-native`)
+`token_file_is_private_and_rotates`, `token_rejects_loose_permissions`, `token_symlink_is_rejected_and_never_followed`, `stale_socket_is_recovered_live_socket_is_not`, `bounded_line_reader` (oversize / EOF / non-UTF-8), `invalid_json_and_protocol_shape`, `token_comparison`, `native_build_never_drops_events_on_401`. Wrong-UID peers cannot be exercised on a single-user CI runner (SKIPPED; enforced by `peer_cred` + 0700 dir + 0600 socket).

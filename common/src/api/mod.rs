@@ -65,10 +65,51 @@ pub async fn authed_post<B: serde::Serialize>(client: &Client, path: &str, body:
     Ok(res)
 }
 
+/// Default builds: unchanged behaviour (401 after a failed refresh is final).
+#[cfg(not(feature = "macos-native"))]
 pub fn is_permanent_failure(status: StatusCode) -> bool {
     matches!(status.as_u16(), 400 | 401 | 403 | 404 | 422)
 }
 
+/// Native macOS build: a 401 that survives the one-shot refresh means the
+/// session is missing/expired (e.g. the app has not handed over a fresh token
+/// yet), not that the batch is bad. Treating it as permanent would mark the
+/// events synced and lose them, so it is retried with backoff instead.
+#[cfg(feature = "macos-native")]
+pub fn is_permanent_failure(status: StatusCode) -> bool {
+    matches!(status.as_u16(), 400 | 403 | 404 | 422)
+}
+
 pub fn is_retryable(status: StatusCode) -> bool {
     status.as_u16() == 429 || status.is_server_error()
+}
+
+#[cfg(test)]
+mod failure_class_tests {
+    use super::*;
+
+    #[test]
+    fn server_errors_and_429_are_retryable() {
+        assert!(is_retryable(StatusCode::INTERNAL_SERVER_ERROR));
+        assert!(is_retryable(StatusCode::TOO_MANY_REQUESTS));
+        assert!(!is_retryable(StatusCode::BAD_REQUEST));
+    }
+
+    #[test]
+    fn validation_errors_are_permanent() {
+        assert!(is_permanent_failure(StatusCode::BAD_REQUEST));
+        assert!(is_permanent_failure(StatusCode::UNPROCESSABLE_ENTITY));
+    }
+
+    #[cfg(not(feature = "macos-native"))]
+    #[test]
+    fn default_build_keeps_401_permanent() {
+        assert!(is_permanent_failure(StatusCode::UNAUTHORIZED));
+    }
+
+    #[cfg(feature = "macos-native")]
+    #[test]
+    fn native_build_never_drops_events_on_401() {
+        assert!(!is_permanent_failure(StatusCode::UNAUTHORIZED));
+    }
 }

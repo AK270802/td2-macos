@@ -4,6 +4,8 @@ import EffiLensKit
 /// Routes between launch, onboarding/sign-in, consent and the main shell.
 struct RootView: View {
     @Environment(AppModel.self) private var model
+    @AppStorage("effilens.onboarding.welcomeSeen") private var welcomeSeen = false
+    @AppStorage("effilens.onboarding.setupDone") private var setupDone = false
 
     var body: some View {
         Group {
@@ -11,13 +13,13 @@ struct RootView: View {
             case .launching:
                 LaunchView()
             case .signedOut:
-                SignInView()
+                if welcomeSeen { SignInView() } else { WelcomeView { welcomeSeen = true } }
             case .consentRequired(let consent):
                 ConsentView(consent: consent)
             case .passwordChangeRequired:
                 PasswordChangeRequiredView()
             case .ready:
-                MainShellView()
+                if setupDone { MainShellView() } else { SetupFlowView { setupDone = true } }
             case .configurationError(let message):
                 ContentUnavailableView("EffiLens can't start", systemImage: "exclamationmark.octagon", description: Text(message))
             }

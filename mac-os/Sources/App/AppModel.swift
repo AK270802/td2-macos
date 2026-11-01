@@ -33,6 +33,10 @@ final class AppModel {
     private(set) var permissions: AgentPermissions?
     private(set) var agentRegistration: AgentLifecycle.Registration?
     var unreadNotifications = 0
+    private var notificationsPrimed = false
+    private var unreadPollTask: Task<Void, Never>?
+    private let reminder = InactiveReminder()
+    private var idleWarned = false
 
     let environment: AppEnvironment?
     private var sessionEventsTask: Task<Void, Never>?
@@ -83,6 +87,7 @@ final class AppModel {
     func signOut() async {
         guard let environment else { return }
         agentPollTask?.cancel()
+        unreadPollTask?.cancel()
         if let agent = environment.agent {
             // Stop tracking before dropping credentials (parity with the Tauri tray Quit).
             try? await agent.stopTracking()
@@ -91,12 +96,53 @@ final class AppModel {
         await environment.session.signOut()
         user = nil
         agentLink = .unknown
+        syncStatus = nil
+        permissions = nil
+        unreadNotifications = 0
+        notificationsPrimed = false
+        DesktopNotifier.updateDockBadge(0)
         phase = .signedOut
     }
 
     func refreshUnreadCount() async {
         guard let environment, phase == .ready else { return }
-        if let count = try? await environment.notifications.unreadCount() { unreadNotifications = count }
+        guard let count = try? await environment.notifications.unreadCount() else { return }
+        let previous = unreadNotifications
+        unreadNotifications = count
+        DesktopNotifier.updateDockBadge(count)
+        if count > previous, previous >= 0, notificationsPrimed {
+            await DesktopNotifier.postUnreadSummary(newCount: count - previous)
+        }
+        notificationsPrimed = true
+    }
+
+    // MARK: - Agent commands (errors are surfaced, never swallowed)
+
+    /// Last failed agent command, shown as an alert by the shell.
+    var agentCommandError: AppError?
+
+    /// Runs one IPC command against the daemon and surfaces failures.
+    func runAgent(_ operation: @escaping @Sendable (AgentClient) async throws -> Void) async {
+        guard let agent = environment?.agent else {
+            agentCommandError = .agentUnavailable("The tracking agent is not installed in this build.")
+            return
+        }
+        if agentLink == .legacyConflict {
+            agentCommandError = .agentUnavailable("Quit the older WorkPulse app first — running both would record time twice.")
+            return
+        }
+        do {
+            try await operation(agent)
+        } catch {
+            agentCommandError = (error as? AppError) ?? .agentUnavailable("The tracking agent did not respond.")
+        }
+    }
+
+    /// Recovery action: re-registers the LaunchAgent (launchd starts it) and
+    /// forces a fresh session hand-off on the next successful poll.
+    func restartAgentConnection() {
+        agentRegistration = AgentLifecycle.ensureRegistered()
+        startAgentMonitoring()
     }
 
     // MARK: - Session events
@@ -110,6 +156,9 @@ final class AppModel {
                 switch event {
                 case .expired:
                     self.agentPollTask?.cancel()
+                    self.unreadPollTask?.cancel()
+                    // The daemon keeps its queue: an expired portal session is not a
+                    // logout, and clearing here would discard unsynced activity.
                     self.user = nil
                     self.phase = .signedOut
                 case .passwordChangeRequired:
@@ -155,6 +204,14 @@ final class AppModel {
     /// Reconnects automatically when launchd restarts the agent.
     private func startAgentMonitoring() {
         agentRegistration = AgentLifecycle.ensureRegistered()
+        unreadPollTask?.cancel()
+        unreadPollTask = Task { [weak self] in
+            // API_INTEGRATION.md: notifications refresh every 60 s.
+            while !Task.isCancelled {
+                try? await Task.sleep(for: .seconds(60))
+                await self?.refreshUnreadCount()
+            }
+        }
         guard let agent = environment?.agent else { agentLink = .unavailable; return }
         agentPollTask?.cancel()
         agentPollTask = Task { [weak self] in
@@ -184,6 +241,11 @@ final class AppModel {
                 }
                 guard let self else { return }
                 if self.agentLink != link { self.agentLink = link }
+                if let state {
+                    await self.reminder.update(isTracking: state.state == .running || state.state == .onBreak)
+                    if state.idleWarning, !self.idleWarned, !NSApp.isActive { await DesktopNotifier.postIdleWarning() }
+                    self.idleWarned = state.idleWarning
+                }
                 if let sync { self.syncStatus = sync }
                 if let perms, perms != self.permissions { self.permissions = perms }
                 tick += 1

@@ -5,9 +5,10 @@ import EffiLensKit
 /// Menu-bar label: compact live timer with a state dot (prototype menu-bar extra).
 struct MenuBarLabel: View {
     @Environment(AppModel.self) private var model
+    var showsTimer = true
 
     var body: some View {
-        if let state = model.timerState, state.state != .idle {
+        if showsTimer, let state = model.timerState, state.state != .idle {
             HStack(spacing: 4) {
                 Image(systemName: state.state == .running ? "record.circle.fill" : "pause.circle.fill")
                 Text(Format.clock(state.elapsedSecs)).monospacedDigit()
@@ -41,6 +42,13 @@ struct MenuBarPopover: View {
                 NSApp.activate(ignoringOtherApps: true)
             }
             .keyboardShortcut("o")
+            Button("Show Mini Timer") { openWindow(id: SceneID.miniTimer) }
+            SettingsLink { Text("Settings…") }
+                .keyboardShortcut(",")
+            if let error = model.agentCommandError {
+                Label(error.userMessage, systemImage: "exclamationmark.triangle")
+                    .font(Typo.caption).foregroundStyle(Palette.warning)
+            }
             if model.phase != .ready {
                 Text("Sign in from the main window to start tracking.").font(Typo.caption).foregroundStyle(Palette.textSecondary)
             }
@@ -64,11 +72,11 @@ struct MenuBarPopover: View {
                     .font(Typo.body).foregroundStyle(Palette.textSecondary).lineLimit(1)
                 HStack {
                     Button(state.state == .running ? "Pause" : "Start") {
-                        Task { try? await model.environment?.agent?.togglePlayPause() }
+                        Task { await model.runAgent { try await $0.togglePlayPause() } }
                     }
                     .buttonStyle(.borderedProminent)
                     Button("Stop") {
-                        Task { try? await model.environment?.agent?.stopTracking() }
+                        Task { await model.runAgent { try await $0.stopTracking() } }
                     }
                     .buttonStyle(.bordered)
                     .disabled(state.state == .idle)
@@ -83,26 +91,5 @@ struct MenuBarPopover: View {
                 .font(Typo.body)
                 .foregroundStyle(Palette.textSecondary)
         }
-    }
-}
-
-/// Settings scene shell — panes arrive in Milestone 7.
-struct SettingsPlaceholderView: View {
-    @Environment(AppModel.self) private var model
-
-    var body: some View {
-        Form {
-            Section("Account") {
-                LabeledContent("Signed in as", value: model.user?.email ?? "Not signed in")
-                LabeledContent("Role", value: model.user.map { $0.roleValue.displayName } ?? "—")
-                LabeledContent("Server", value: model.environment?.configuration.apiOrigin.host() ?? "—")
-            }
-            Section {
-                Text("General, Tracking, Screenshots, Notifications and Appearance settings arrive in Milestone 7.")
-                    .foregroundStyle(Palette.textSecondary)
-            }
-        }
-        .formStyle(.grouped)
-        .frame(width: 480, height: 320)
     }
 }

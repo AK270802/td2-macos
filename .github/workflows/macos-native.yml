@@ -1,5 +1,6 @@
 # Native SwiftUI EffiLens macOS app (workpulse-rust/mac-os) + its Rust agent.
-# Independent of main.yml (Tauri). Triggers only on mac-os / Rust source changes.
+# Independent of main.yml (Tauri). Produces unsigned (ad-hoc) development
+# installers: EffiLens-macOS-universal.dmg / .pkg / EffiLens.app.zip.
 name: macos-native
 
 on:
@@ -17,6 +18,8 @@ on:
       - "mac-os/**"
       - "common/**"
       - "agentd/**"
+      - "Cargo.toml"
+      - "Cargo.lock"
       - ".github/workflows/macos-native.yml"
   workflow_dispatch:
     inputs:
@@ -29,13 +32,121 @@ concurrency:
   group: macos-native-${{ github.ref }}
   cancel-in-progress: true
 
+permissions:
+  contents: read
+
 env:
   CARGO_TERM_COLOR: always
+  RETENTION_DAYS: 30
 
 jobs:
-  # ── Swift core package ──────────────────────────────────────────────
-  test-kit:
-    name: EffiLensKit build + tests
+  # ── 1. Source validation ─────────────────────────────────────────────
+  validate:
+    name: 1 · Source validation
+    runs-on: macos-15
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install tools
+        run: brew install xcodegen shellcheck
+      - name: Plists and entitlements
+        working-directory: mac-os
+        run: |
+          plutil -lint Resources/Info.plist Resources/EffiLens.entitlements
+          # LaunchAgent template with the placeholder substituted
+          sed 's|__API_URL__|https://dev-workpulse-api.baseel.com|' Resources/LaunchAgent.plist.in > "$RUNNER_TEMP/la.plist"
+          plutil -lint "$RUNNER_TEMP/la.plist"
+          find Resources/Assets.xcassets -name Contents.json -print0 | xargs -0 -n1 plutil -lint >/dev/null
+      - name: XcodeGen spec
+        working-directory: mac-os
+        run: xcodegen dump --spec project.yml --type summary
+      - name: Shell scripts
+        working-directory: mac-os
+        run: shellcheck -S error Scripts/*.sh
+      - name: Cargo manifests
+        run: |
+          cargo metadata --format-version 1 --locked --no-deps >/dev/null
+          cargo tree -p agentd --features macos-native --locked -e normal --depth 1 >/dev/null
+      - name: Rust formatting (advisory — pre-existing code is not rustfmt-clean)
+        continue-on-error: true
+        run: cargo fmt --check -p common -p agentd
+      - name: No credentials committed in mac-os
+        run: |
+          if grep -rInE "(BEGIN (RSA|EC|OPENSSH) PRIVATE KEY|password\s*[:=]\s*\"[^\"]{4,}\")" mac-os/Sources mac-os/Scripts mac-os/Resources; then
+            echo "::error::Possible credential in source"; exit 1
+          fi
+
+  # ── 2. Rust default-feature regression ───────────────────────────────
+  rust-default:
+    name: 2 · Rust regression (default features)
+    runs-on: macos-15
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: default
+      - run: rustc --version && cargo --version
+      - name: cargo test -p common
+        run: cargo test -p common --locked
+      - name: cargo build -p agentd
+        run: cargo build -p agentd --locked
+      - name: Default build has no native symbols
+        run: |
+          if nm -U target/debug/agentd | grep -q "macos_native"; then
+            echo "::error::macos-native code leaked into the default build"; exit 1
+          fi
+
+  # ── 3. Native Rust agent (per architecture) ──────────────────────────
+  rust-native:
+    name: 3 · Rust macos-native (${{ matrix.target }})
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: aarch64-apple-darwin
+            runner: macos-15
+          - target: x86_64-apple-darwin
+            runner: macos-15-intel
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: native-${{ matrix.target }}
+      - run: rustc --version && cargo --version && uname -m
+      - name: Tests (common + agentd, macos-native)
+        run: |
+          set -o pipefail
+          cargo test -p common --features macos-native --target ${{ matrix.target }} --locked 2>&1 | tee "$RUNNER_TEMP/rust-native-tests-${{ matrix.target }}.txt"
+          cargo test -p agentd --features macos-native --target ${{ matrix.target }} --locked 2>&1 | tee -a "$RUNNER_TEMP/rust-native-tests-${{ matrix.target }}.txt"
+      - name: Release build
+        run: cargo build -p agentd --release --features macos-native --target ${{ matrix.target }} --locked
+      - name: Stage binary
+        run: |
+          mkdir -p "$RUNNER_TEMP/agent"
+          cp target/${{ matrix.target }}/release/agentd "$RUNNER_TEMP/agent/effilens-agentd-${{ matrix.target }}"
+          file "$RUNNER_TEMP/agent/effilens-agentd-${{ matrix.target }}"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: agentd-${{ matrix.target }}
+          path: ${{ runner.temp }}/agent/*
+          retention-days: 7
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: rust-native-test-report-${{ matrix.target }}
+          path: ${{ runner.temp }}/rust-native-tests-*.txt
+          retention-days: ${{ env.RETENTION_DAYS }}
+
+  # ── 4. Swift package tests ───────────────────────────────────────────
+  swift-tests:
+    name: 4 · EffiLensKit build + tests
     runs-on: macos-15
     timeout-minutes: 30
     defaults:
@@ -57,59 +168,12 @@ jobs:
         with:
           name: kit-test-report
           path: ${{ runner.temp }}/kit-tests*.xml
+          retention-days: ${{ env.RETENTION_DAYS }}
 
-  # ── Rust: regression (default features) + native agent ───────────────
-  # Only crates relevant to the native app are built here. `app/src-tauri`
-  # needs the Node frontend and is covered by main.yml, so the workspace-wide
-  # `cargo test --workspace` is intentionally not used.
-  rust:
-    name: Rust agent (default + macos-native)
-    runs-on: macos-15
-    timeout-minutes: 45
-    steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
-        with:
-          targets: aarch64-apple-darwin,x86_64-apple-darwin
-      - uses: Swatinem/rust-cache@v2
-      - name: Versions
-        run: rustc --version && cargo --version
-      - name: Regression — common tests (default features)
-        run: cargo test -p common --locked
-      - name: Regression — agentd build (default features)
-        run: cargo build -p agentd --locked
-      - name: Native — common tests (macos-native)
-        run: |
-          if grep -q '^macos-native' common/Cargo.toml; then
-            cargo test -p common --features macos-native --locked
-          else
-            echo "macos-native feature not present yet — skipped"
-          fi
-      - name: Native — universal effilens-agentd
-        run: |
-          if grep -q '^macos-native' agentd/Cargo.toml; then
-            for t in aarch64-apple-darwin x86_64-apple-darwin; do
-              cargo build -p agentd --release --features macos-native --target $t --locked
-            done
-            mkdir -p "$RUNNER_TEMP/agent"
-            lipo -create \
-              target/aarch64-apple-darwin/release/agentd \
-              target/x86_64-apple-darwin/release/agentd \
-              -output "$RUNNER_TEMP/agent/effilens-agentd"
-            lipo -info "$RUNNER_TEMP/agent/effilens-agentd"
-          else
-            echo "macos-native feature not present yet — skipped"
-          fi
-      - uses: actions/upload-artifact@v4
-        with:
-          name: effilens-agentd-universal
-          path: ${{ runner.temp }}/agent/effilens-agentd
-          if-no-files-found: ignore
-
-  # ── App bundle ───────────────────────────────────────────────────────
+  # ── 5. App build (Debug + Release, universal) ────────────────────────
   build-app:
-    name: EffiLens.app (${{ matrix.configuration }})
-    needs: [test-kit, rust]
+    name: 5 · EffiLens.app (${{ matrix.configuration }})
+    needs: [validate, rust-default, rust-native, swift-tests]
     runs-on: macos-15
     timeout-minutes: 45
     strategy:
@@ -123,14 +187,23 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/download-artifact@v4
         with:
-          name: effilens-agentd-universal
-          path: mac-os/build/agent
-        continue-on-error: true
+          pattern: agentd-*
+          merge-multiple: true
+          path: ${{ runner.temp }}/agent
+      - name: Universal effilens-agentd (lipo)
+        run: |
+          mkdir -p build/agent
+          lipo -create \
+            "$RUNNER_TEMP/agent/effilens-agentd-aarch64-apple-darwin" \
+            "$RUNNER_TEMP/agent/effilens-agentd-x86_64-apple-darwin" \
+            -output build/agent/effilens-agentd
+          chmod 0755 build/agent/effilens-agentd
+          lipo -info build/agent/effilens-agentd
       - name: Install XcodeGen
         run: brew install xcodegen
       - name: Generate project
         run: xcodegen generate --spec project.yml
-      - name: Build (unsigned)
+      - name: Build (universal, unsigned)
         run: |
           set -o pipefail
           xcodebuild \
@@ -142,22 +215,122 @@ jobs:
             ARCHS="arm64 x86_64" ONLY_ACTIVE_ARCH=NO \
             CODE_SIGN_IDENTITY=- CODE_SIGNING_REQUIRED=NO CODE_SIGNING_ALLOWED=NO \
             build 2>&1 | tee "$RUNNER_TEMP/xcodebuild-${{ matrix.configuration }}.log"
-      - name: Package (zip, DMG, PKG — unsigned)
-        run: ./Scripts/package.sh "$RUNNER_TEMP/dd/Build/Products/${{ matrix.configuration }}/EffiLens.app" "$RUNNER_TEMP/out" "${{ matrix.configuration }}"
+      - name: Validate bundle
+        run: |
+          APP="$RUNNER_TEMP/dd/Build/Products/${{ matrix.configuration }}/EffiLens.app"
+          file "$APP/Contents/MacOS/EffiLens"
+          lipo -info "$APP/Contents/MacOS/EffiLens"
+          lipo -info "$APP/Contents/MacOS/effilens-agentd"
+          ls -la "$APP/Contents/MacOS" "$APP/Contents/Library/LaunchAgents"
+          plutil -p "$APP/Contents/Library/LaunchAgents/com.baseel.effilens.mac.agent.plist"
+          /usr/libexec/PlistBuddy -c 'Print :LSMinimumSystemVersion' "$APP/Contents/Info.plist"
+          ditto -c -k --keepParent "$APP" "$RUNNER_TEMP/EffiLens-${{ matrix.configuration }}.app.zip"
       - uses: actions/upload-artifact@v4
         with:
-          name: EffiLens-${{ matrix.configuration }}-unsigned
-          path: ${{ runner.temp }}/out/*
+          name: app-${{ matrix.configuration }}
+          path: ${{ runner.temp }}/EffiLens-${{ matrix.configuration }}.app.zip
+          retention-days: 7
       - uses: actions/upload-artifact@v4
         if: always()
         with:
           name: xcodebuild-log-${{ matrix.configuration }}
           path: ${{ runner.temp }}/xcodebuild-${{ matrix.configuration }}.log
+          retention-days: ${{ env.RETENTION_DAYS }}
+
+  # ── 6. Universal packaging + installer validation ────────────────────
+  package:
+    name: 6 · DMG + PKG (universal, unsigned)
+    needs: build-app
+    runs-on: macos-15
+    timeout-minutes: 30
+    defaults:
+      run:
+        working-directory: mac-os
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: app-*
+          merge-multiple: true
+          path: ${{ runner.temp }}/apps
+      - name: Unpack app bundles
+        run: |
+          for c in Release Debug; do
+            mkdir -p "$RUNNER_TEMP/apps/$c"
+            ditto -x -k "$RUNNER_TEMP/apps/EffiLens-$c.app.zip" "$RUNNER_TEMP/apps/$c"
+          done
+      - name: Package Release (EffiLens-macOS-universal.*)
+        run: ./Scripts/package.sh "$RUNNER_TEMP/apps/Release/EffiLens.app" "$RUNNER_TEMP/out" universal
+      - name: Package Debug (diagnostics build)
+        run: ./Scripts/package.sh "$RUNNER_TEMP/apps/Debug/EffiLens.app" "$RUNNER_TEMP/out-debug" universal-debug
+      - name: Launch smoke test (app starts and stays up for 20 s)
+        run: |
+          APP="$RUNNER_TEMP/apps/Release/EffiLens.app"
+          "$APP/Contents/MacOS/EffiLens" > "$RUNNER_TEMP/launch.log" 2>&1 &
+          PID=$!
+          sleep 20
+          if kill -0 "$PID" 2>/dev/null; then
+            echo "EffiLens is running (pid $PID)"; kill "$PID"
+          else
+            cat "$RUNNER_TEMP/launch.log"; echo "::error::EffiLens exited during launch"; exit 1
+          fi
+      - name: Release notes
+        run: |
+          cat > "$RUNNER_TEMP/out/RELEASE_NOTES.md" <<EOF
+          # EffiLens for macOS — development build
+
+          - Commit: ${GITHUB_SHA}
+          - Run: ${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}
+          - Universal (Apple Silicon + Intel), macOS 14 or later
+          - Backend: https://dev-workpulse-api.baseel.com (development)
+
+          **Unsigned development build.** Ad-hoc signed only: not signed with a
+          Developer ID and not notarised. Gatekeeper will block the first launch —
+          follow mac-os/INSTALL_AND_TEST.md ("Opening an unsigned build").
+          EOF
+          cp INSTALL_AND_TEST.md "$RUNNER_TEMP/out/"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: EffiLens-macOS-universal-unsigned
+          path: ${{ runner.temp }}/out/*
+          retention-days: ${{ env.RETENTION_DAYS }}
+      - uses: actions/upload-artifact@v4
+        with:
+          name: EffiLens-macOS-universal-debug-unsigned
+          path: ${{ runner.temp }}/out-debug/*
+          retention-days: ${{ env.RETENTION_DAYS }}
+
+  # ── 7. Run summary (artifact index) ──────────────────────────────────
+  summary:
+    name: 7 · Artifacts summary
+    needs: package
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: EffiLens-macOS-universal-unsigned
+          path: out
+      - name: Write job summary
+        run: |
+          {
+            echo "## EffiLens macOS — development installers (unsigned)"
+            echo
+            echo "Download the **EffiLens-macOS-universal-unsigned** artifact (kept ${RETENTION_DAYS} days)."
+            echo
+            echo '```'
+            cat out/SHA256SUMS-universal.txt
+            echo '```'
+            echo
+            echo '```'
+            cat out/build-metadata-universal.txt
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
 
   release:
     name: Sign + notarise
     if: ${{ github.event_name == 'workflow_dispatch' && inputs.release }}
-    needs: build-app
+    needs: package
     runs-on: macos-15
     timeout-minutes: 60
     defaults:
