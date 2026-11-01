@@ -170,6 +170,13 @@ public struct AgentSessionPayload: Encodable, Sendable {
     public let userId: String
     public let tenantId: String
     public let apiBaseUrl: String
+
+    public init(accessToken: String, userId: String, tenantId: String, apiBaseUrl: String) {
+        self.accessToken = accessToken
+        self.userId = userId
+        self.tenantId = tenantId
+        self.apiBaseUrl = apiBaseUrl
+    }
 }
 
 /// `start_break` payload.
