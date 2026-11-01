@@ -220,3 +220,28 @@ public struct UnreadCountResponse: Decodable, Sendable {
 public struct MarkAllReadResponse: Decodable, Sendable {
     public let updated: Int
 }
+
+
+/// `TimelineEvent` (app/schemas/analytics.py) — the user's synced activity.
+public struct TimelineEvent: Decodable, Sendable, Hashable, Identifiable {
+    public let eventUuid: UUID
+    public let eventType: String
+    public let date: CalendarDate
+    public let ts: Date
+    public let durationSec: Int
+    public let appName: String?
+    public let windowTitle: String?
+    public let domain: String?
+    public let category: String?
+    public var id: UUID { eventUuid }
+}
+
+/// `TimelineResponse` — `GET /analytics/timeline`.
+public struct TimelineResponse: Decodable, Sendable {
+    public let events: [TimelineEvent]
+    public let totalActiveSec: Int
+    public let totalIdleSec: Int
+    public let totalEvents: Int
+    public let page: Int
+    public let pageSize: Int
+}

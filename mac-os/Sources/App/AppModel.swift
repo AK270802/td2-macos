@@ -38,6 +38,12 @@ final class AppModel {
     private var notificationsPrimed = false
     private var unreadPollTask: Task<Void, Never>?
     private let reminder = InactiveReminder()
+    /// go-agent parity: the idle warning brings the window forward with a
+    /// 60 s countdown (IdleWarningSheet); set when the agent flags idle.
+    private(set) var idleWarningStartedAt: Date?
+    /// Opens the main window when it was closed (set by an always-alive view).
+    var openMainWindowAction: (() -> Void)?
+    private var wakeObserver: NSObjectProtocol?
     private var idleWarned = false
 
     let environment: AppEnvironment?
@@ -56,6 +62,7 @@ final class AppModel {
     func start() async {
         guard let environment, phase == .launching else { return }
         observeSession(environment.session)
+        observeWake()
         if !Prefs.bool(Prefs.rememberMac) {
             // "Remember this Mac" was off: forget the previous session.
             await environment.session.signOut()
@@ -144,6 +151,75 @@ final class AppModel {
         } catch {
             agentCommandError = (error as? AppError) ?? .agentUnavailable("The tracking agent did not respond.")
         }
+    }
+
+    // MARK: - go-agent parity: window restore, idle response, wake, breaks
+
+    /// Brings the main window to the front (or reopens it). `float` keeps it
+    /// above other windows briefly, like go-agent's idle warning.
+    func restoreMainWindow(float: Bool = false) {
+        NSApp.activate(ignoringOtherApps: true)
+        guard let window = NSApp.windows.first(where: { $0.identifier?.rawValue.hasPrefix(SceneID.main) == true }) else {
+            openMainWindowAction?()
+            return
+        }
+        if window.isMiniaturized { window.deminiaturize(nil) }
+        window.makeKeyAndOrderFront(nil)
+        window.level = .floating
+        Task { @MainActor in
+            try? await Task.sleep(for: .milliseconds(float ? 60_000 : 400))
+            window.level = .normal
+        }
+    }
+
+    /// User answered the idle warning (or the countdown expired).
+    /// keepWorking → idle span recorded as idle, timer keeps running;
+    /// otherwise the session stops back-dated to idle start (agent rules).
+    func respondToIdle(keepWorking: Bool, timedOut: Bool = false) async {
+        idleWarningStartedAt = nil
+        NSApp.windows.forEach { if $0.level == .floating, $0.identifier?.rawValue.hasPrefix(SceneID.main) == true { $0.level = .normal } }
+        await runAgent { try await $0.resolveIdle(keepWorking: keepWorking) }
+        if timedOut {
+            await DesktopNotifier.post(title: "Tracking Stopped",
+                                       body: "No activity detected — tracking has been stopped. Remember to start tracking when you're back at work.")
+        }
+    }
+
+    /// go-agent tray "Pause": a 15-minute coffee break.
+    func startCoffeeBreak() async {
+        await runAgent { try await $0.startBreak(AgentBreakPayload(breakType: "Coffee Break", durationSecs: 15 * 60)) }
+    }
+
+    /// Re-sends the session before start/resume (go-agent restores the session
+    /// on demand so a long-idle Mac never starts tracking unauthenticated).
+    func ensureAgentSession() async {
+        guard let agent = environment?.agent, isAgentConnected else { return }
+        _ = await handOffSession(to: agent)
+    }
+
+    /// go-agent OnSystemWake: restore the window, then after the network has
+    /// had time to reconnect refresh the session, re-hand it to the agent and
+    /// sync. (The agent itself pauses tracking at sleep — `pause_for_sleep`.)
+    private func observeWake() {
+        guard wakeObserver == nil else { return }
+        wakeObserver = NSWorkspace.shared.notificationCenter.addObserver(
+            forName: NSWorkspace.didWakeNotification, object: nil, queue: .main
+        ) { [weak self] _ in
+            Task { @MainActor in
+                guard let self, self.phase == .ready, let environment = self.environment else { return }
+                self.restoreMainWindow()
+                try? await Task.sleep(for: .seconds(10))
+                _ = await environment.session.restore()
+                await self.ensureAgentSession()
+                await self.runAgentSilently { try await $0.syncNow() }
+            }
+        }
+    }
+
+    /// Like `runAgent` but never raises an alert (background maintenance).
+    func runAgentSilently(_ operation: @escaping @Sendable (AgentClient) async throws -> Void) async {
+        guard let agent = environment?.agent, agentLink != .legacyConflict else { return }
+        try? await operation(agent)
     }
 
     /// Recovery action: re-registers the LaunchAgent (launchd starts it) and
@@ -250,8 +326,17 @@ final class AppModel {
                 guard let self else { return }
                 if self.agentLink != link { self.agentLink = link }
                 if let state {
-                    await self.reminder.update(isTracking: state.state == .running || state.state == .onBreak)
-                    if state.idleWarning, !self.idleWarned, !NSApp.isActive { await DesktopNotifier.postIdleWarning() }
+                    if await self.reminder.update(isTracking: state.state == .running || state.state == .onBreak) {
+                        // go-agent ShowMainWindowCallback: reminder also restores the window.
+                        self.restoreMainWindow()
+                    }
+                    if state.idleWarning, !self.idleWarned {
+                        // go-agent OnIdleWarning: restore + float the window, start the countdown.
+                        self.idleWarningStartedAt = Date()
+                        self.restoreMainWindow(float: true)
+                        if !NSApp.isActive { await DesktopNotifier.postIdleWarning() }
+                    }
+                    if !state.idleWarning, self.idleWarned { self.idleWarningStartedAt = nil }
                     self.idleWarned = state.idleWarning
                 }
                 if let sync { self.syncStatus = sync }

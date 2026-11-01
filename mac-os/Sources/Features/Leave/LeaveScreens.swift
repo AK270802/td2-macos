@@ -10,6 +10,7 @@ import EffiLensKit
 
 struct ApplyLeaveView: View {
     @Environment(Navigator.self) private var navigator
+    @Environment(AppModel.self) private var model
     @State private var start = Date()
     @State private var end = Date()
     @State private var halfDay = false
@@ -46,10 +47,12 @@ struct ApplyLeaveView: View {
             FractionalColumns(ratio: 1.3) {
                 Card("Leave request") {
                     VStack(alignment: .leading, spacing: 0) {
-                        FieldLabel("Leave type").padding(.top, -12)
-                        HStack(spacing: 8) {
-                            EffiSegmented(selection: .constant(0), options: [(0, "Paid leave")])
-                            Text("Paid or unpaid is decided by your balance.").font(Typo.caption).foregroundStyle(Palette.textTertiary)
+                        FieldLabel("Leave Type").padding(.top, -12)
+                        HStack(spacing: 10) {
+                            EffiSegmented(selection: $halfDay, options: [(false, "Full Day"), (true, "Half Day")])
+                            Spacer()
+                            Text("Total duration").font(Typo.label).foregroundStyle(Palette.textSecondary)
+                            Text(halfDay ? "0.5 day" : "\(calendarDays) day\(calendarDays == 1 ? "" : "s")").font(Typo.mono)
                         }
                         EqualColumns(count: 2, spacing: 10) {
                             VStack(alignment: .leading, spacing: 0) {
@@ -62,8 +65,8 @@ struct ApplyLeaveView: View {
                                     .disabled(halfDay)
                             }
                         }
-                        FieldLabel("Duration")
-                        EffiSegmented(selection: $halfDay, options: [(false, "Full day"), (true, "Half day")])
+                        Text(LeaveRules.paymentDecisionNote(role: model.role))
+                            .font(Typo.caption).foregroundStyle(Palette.textTertiary).padding(.top, 8)
                         FieldLabel("Reason")
                         EffiTextArea(placeholder: "Brief reason for your manager", text: $reason)
                         FieldLabel("Approver")
@@ -75,7 +78,8 @@ struct ApplyLeaveView: View {
                             else if let error { Text(error.userMessage).foregroundStyle(Palette.danger) }
                             else if let submitted {
                                 HStack {
-                                    Text(submitted.message ?? "Request submitted — \(submitted.statusValue?.displayName ?? submitted.status).").foregroundStyle(Palette.success)
+                                    Text(LeaveRules.unpaidNotice(submitted, forApplicant: true) ?? "Request submitted — \(submitted.statusValue?.displayName ?? submitted.status).")
+                                        .foregroundStyle(submitted.kind == .unpaid || submitted.kind == .mixed ? Palette.warning : Palette.success)
                                     CardLink("View request") { navigator.leaveDetail = LeaveDetailContext(application: submitted, mode: .own, back: .myRequests) }
                                 }
                             }
@@ -152,7 +156,8 @@ struct ApplyLeaveView: View {
 @MainActor
 @Observable
 final class LeaveRequestsViewModel {
-    enum Filter: String, CaseIterable { case all = "All", pending = "Pending", approved = "Approved", rejected = "Rejected", cancelled = "Cancelled" }
+    /// Portal chips (leaves-client.tsx): cancelled only appears under its own chip.
+    enum Filter: String, CaseIterable { case all = "All", approved = "Approved", pending = "Pending", rejected = "Rejected", paid = "Paid", unpaid = "Unpaid", cancelled = "Cancelled" }
     var filter: Filter = .all
     private(set) var list: Loadable<[LeaveApplication]> = .idle
     private let leave: LeaveService
@@ -165,12 +170,15 @@ final class LeaveRequestsViewModel {
 
     var filtered: [LeaveApplication] {
         let items = list.value ?? []
+        if filter == .cancelled { return items.filter { $0.statusValue == .cancelled } }
+        let active = items.filter { $0.statusValue != .cancelled }
         switch filter {
-        case .all: return items
-        case .pending: return items.filter { $0.statusValue?.isPending == true }
-        case .approved: return items.filter { $0.statusValue == .approved }
-        case .rejected: return items.filter { $0.statusValue == .rejected }
-        case .cancelled: return items.filter { $0.statusValue == .cancelled }
+        case .all, .cancelled: return active
+        case .pending: return active.filter { $0.statusValue?.isPending == true }
+        case .approved: return active.filter { $0.statusValue == .approved }
+        case .rejected: return active.filter { $0.statusValue == .rejected }
+        case .paid: return active.filter { $0.kind == .paid || $0.kind == .mixed }
+        case .unpaid: return active.filter { $0.kind == .unpaid || $0.kind == .mixed }
         }
     }
 
@@ -229,11 +237,12 @@ struct LeaveApplicationTable: View {
         if showEmployee {
             cols.append(.init("Employee") { a in Text(a.userDisplayName ?? a.userEmail ?? "—").font(Typo.bodyEmphasis) })
         }
-        cols.append(.init("Type") { a in Text(a.kind?.displayName ?? a.leaveType.capitalized).font(Typo.bodyEmphasis) })
         cols.append(.init("Dates") { a in Text(Format.dateRange(a.startDate, a.endDate)) })
-        cols.append(.init("Days", width: 60) { a in Text(Format.days(a.durationDays)).font(Typo.mono) })
-        cols.append(.init("Applied", width: 110) { a in Text(a.createdAt.formatted(.dateTime.day().month(.abbreviated))).foregroundStyle(Palette.textSecondary) })
-        cols.append(.init("Status", width: 150) { a in LeaveStatusPill(status: a.statusValue) })
+        cols.append(.init("Days", width: 50) { a in Text(Format.days(a.durationDays)).font(Typo.mono) })
+        cols.append(.init("Leave Type", width: 90) { a in Text(LeaveRules.dayTypeLabel(a)) })
+        cols.append(.init("Payment", width: 110) { a in LeavePaymentLabel(application: a) })
+        cols.append(.init("Applied", width: 80) { a in Text(a.createdAt.formatted(.dateTime.day().month(.abbreviated))).foregroundStyle(Palette.textSecondary) })
+        cols.append(.init("Approval", width: 140) { a in LeaveStatusPill(status: a.statusValue) })
         cols.append(.init("", width: 30) { _ in Text("›").foregroundStyle(Palette.textTertiary) })
         return cols
     }
@@ -249,6 +258,8 @@ struct LeaveDetailView: View {
     let mode: Mode
     /// Returns to the previous screen (and lets it reload).
     var onClose: () -> Void
+    @Environment(AppModel.self) private var model
+    @State private var editing = false
     @State private var rejectReason = ""
     @State private var working = false
     @State private var error: AppError?
@@ -277,11 +288,20 @@ struct LeaveDetailView: View {
                     }
                     .padding(.top, 18)
                     EqualColumns(count: 3) {
-                        fact("Paid", "\(Format.days(application.paidDays)) d")
-                        fact("Unpaid", "\(Format.days(application.unpaidDays)) d")
+                        fact("Leave Type", LeaveRules.dayTypeLabel(application))
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text("Payment").font(Typo.small).foregroundStyle(Palette.textTertiary)
+                            LeavePaymentLabel(application: application, showSplit: true)
+                        }
                         fact("Source", application.sourceValue?.displayName ?? application.source)
                     }
                     .padding(.top, 10)
+                    if let notice = LeaveRules.unpaidNotice(application, forApplicant: application.userId == model.user?.id) {
+                        Text(notice).font(Typo.caption).foregroundStyle(Palette.warning).padding(.top, 8)
+                    }
+                    if LeaveRules.isSystemLeave(application) {
+                        Text("Created automatically by EffiLens — it can't be edited or withdrawn.").font(Typo.caption).foregroundStyle(Palette.textTertiary).padding(.top, 4)
+                    }
                     VStack(alignment: .leading, spacing: 4) {
                         Text("Reason").font(Typo.small).foregroundStyle(Palette.textTertiary)
                         Text(application.reason?.isEmpty == false ? application.reason! : "No reason given").font(Typo.body).textSelection(.enabled)
@@ -305,20 +325,32 @@ struct LeaveDetailView: View {
                 }
             }
         }
-        .confirmationDialog("Withdraw this leave request?", isPresented: $confirmWithdraw) {
-            Button("Withdraw", role: .destructive) { Task { await withdraw() } }
+        .confirmationDialog("Cancel this leave?", isPresented: $confirmWithdraw) {
+            Button("Cancel Leave", role: .destructive) { Task { await withdraw() } }
         } message: {
-            Text("\(Format.dateRange(application.startDate, application.endDate)) · \(Format.days(application.durationDays)) day(s). Your approver will be notified.")
+            Text("\(Format.dateRange(application.startDate, application.endDate)) · \(Format.days(application.durationDays)) day(s).\(application.statusValue == .approved ? " The days will be returned to the balance." : " The approver will be notified.")")
+        }
+        .sheet(isPresented: $editing) {
+            LeaveEditSheet(application: application, leave: leave) { onClose() }
         }
     }
 
+    private var actor: LeaveRules.Actor { LeaveRules.Actor(id: model.user?.id, role: model.role) }
+
     @ViewBuilder
     private var actions: some View {
-        if mode == .own {
-            if application.isWithdrawable {
-                Button("Withdraw Request") { confirmWithdraw = true }.buttonStyle(.effiDanger).disabled(working)
+        let canEdit = LeaveRules.canEdit(application, actor: actor)
+        let canCancel = LeaveRules.canCancel(application, actor: actor)
+        if canEdit || canCancel {
+            HStack(spacing: 8) {
+                if canCancel {
+                    Button(application.userId == model.user?.id ? "Withdraw Request" : "Cancel Leave") { confirmWithdraw = true }
+                        .buttonStyle(.effiDanger).disabled(working)
+                }
+                if canEdit { Button("Edit…") { editing = true }.buttonStyle(.effi).disabled(working) }
             }
-        } else if application.statusValue?.isPending == true {
+        }
+        if mode != .own, LeaveRules.approverLevel(application, role: model.role) != nil {
             VStack(alignment: .leading, spacing: 8) {
                 EffiTextArea(placeholder: "Reason for rejection (required to reject)", text: $rejectReason, height: 56)
                 HStack {
@@ -375,14 +407,89 @@ struct LeaveDetailView: View {
         defer { working = false }
         let reason = rejectReason.trimmingCharacters(in: .whitespacesAndNewlines)
         do {
-            switch (mode, approve) {
-            case (.managerReview, true): _ = try await leave.managerApprove(application)
-            case (.managerReview, false): _ = try await leave.managerReject(application.id, reason: reason)
-            case (.adminReview, true): _ = try await leave.adminApprove(application.id)
-            case (.adminReview, false): _ = try await leave.adminReject(application.id, reason: reason)
-            case (.own, _): return
+            switch (LeaveRules.approverLevel(application, role: model.role), approve) {
+            case (.manager?, true): _ = try await leave.managerApprove(application)
+            case (.manager?, false): _ = try await leave.managerReject(application.id, reason: reason)
+            case (.admin?, true): _ = try await leave.adminApprove(application.id)
+            case (.admin?, false): _ = try await leave.adminReject(application.id, reason: reason)
+            case (nil, _): return
             }
             onClose()
+        } catch {
+            self.error = DashboardViewModel.map(error)
+        }
+    }
+}
+
+/// Edit a leave request (portal LeaveForm in edit mode). Sends
+/// `client_updated_at` so a concurrent change is rejected by the server (409).
+struct LeaveEditSheet: View {
+    let application: LeaveApplication
+    let leave: LeaveService
+    var onSaved: () -> Void
+    @Environment(\.dismiss) private var dismiss
+    @State private var start: Date
+    @State private var end: Date
+    @State private var halfDay: Bool
+    @State private var reason: String
+    @State private var saving = false
+    @State private var error: AppError?
+
+    init(application: LeaveApplication, leave: LeaveService, onSaved: @escaping () -> Void) {
+        self.application = application
+        self.leave = leave
+        self.onSaved = onSaved
+        _start = State(initialValue: application.startDate.date() ?? Date())
+        _end = State(initialValue: application.endDate.date() ?? Date())
+        _halfDay = State(initialValue: application.durationDays.doubleValue == 0.5)
+        _reason = State(initialValue: application.reason ?? "")
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            Text("Edit leave request").font(Typo.serif(26))
+            FieldLabel("Leave Type")
+            EffiSegmented(selection: $halfDay, options: [(false, "Full Day"), (true, "Half Day")])
+            EqualColumns(count: 2, spacing: 10) {
+                VStack(alignment: .leading, spacing: 0) {
+                    FieldLabel("From")
+                    FieldChrome { DatePicker("From", selection: $start, displayedComponents: .date).datePickerStyle(.field) }
+                }
+                VStack(alignment: .leading, spacing: 0) {
+                    FieldLabel("To")
+                    FieldChrome { DatePicker("To", selection: $end, in: start..., displayedComponents: .date).datePickerStyle(.field) }
+                        .disabled(halfDay)
+                }
+            }
+            FieldLabel("Reason")
+            EffiTextArea(placeholder: "Briefly describe the reason for this leave", text: $reason)
+            if let error { Text(error.userMessage).font(.system(size: 12)).foregroundStyle(Palette.danger).padding(.top, 8) }
+            HStack {
+                Spacer()
+                Button("Cancel") { dismiss() }.buttonStyle(.effi).keyboardShortcut(.cancelAction)
+                Button("Save Changes") { Task { await save() } }
+                    .buttonStyle(.effiPrimary)
+                    .keyboardShortcut(.defaultAction)
+                    .disabled(saving || CalendarDate(halfDay ? start : end) < CalendarDate(start))
+            }
+            .padding(.top, 16)
+        }
+        .padding(22)
+        .frame(width: 440)
+        .background(Palette.surfaceRaised)
+    }
+
+    private func save() async {
+        saving = true
+        defer { saving = false }
+        let trimmed = reason.trimmingCharacters(in: .whitespacesAndNewlines)
+        let body = LeaveApplicationUpdate(startDate: CalendarDate(start), endDate: CalendarDate(halfDay ? start : end),
+                                          halfDay: halfDay, reason: trimmed.isEmpty ? nil : trimmed,
+                                          clientUpdatedAt: application.updatedAt)
+        do {
+            _ = try await leave.update(application.id, body)
+            dismiss()
+            onSaved()
         } catch {
             self.error = DashboardViewModel.map(error)
         }
@@ -704,13 +811,16 @@ struct LeaveBalanceView: View {
                 }
             }
             EqualColumns(count: 2) {
-                Card("This year") {
+                Card("Your balance · \(year.formatted(.number.grouping(.never)))") {
                     if let b = balance.value {
+                        // Same rows and labels as the portal's LeaveBalancePanel.
                         VStack(alignment: .leading, spacing: 8) {
-                            SetRowLite("Total leave taken", "\(Format.days(b.totalLeaveTaken)) days")
-                            SetRowLite("Carried forward", "\(Format.days(b.carryForward)) days")
-                            if let h = b.holidaysInYear { SetRowLite("Holidays", "\(h)") }
-                            if let reserved = b.holidayReserved { SetRowLite("Reserved for holidays", "\(Format.days(reserved)) days") }
+                            SetRowLite("Annual Leaves", Format.days(b.paidAllocated))
+                            SetRowLite("Carry Forward", Format.days(b.carryForward))
+                            SetRowLite("Available", Format.days(b.paidRemaining))
+                            SetRowLite("Total Taken", Format.days(b.totalLeaveTaken))
+                            SetRowLite("Unpaid Leaves", Format.days(b.unpaidUsed))
+                            SetRowLite("Comp-off", Format.days(b.compOffRemaining))
                         }
                     } else {
                         Text("—").foregroundStyle(Palette.textTertiary)

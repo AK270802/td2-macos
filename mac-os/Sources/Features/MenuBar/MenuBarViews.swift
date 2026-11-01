@@ -6,9 +6,18 @@ import EffiLensKit
 /// session exists, otherwise the timer glyph.
 struct MenuBarLabel: View {
     @Environment(AppModel.self) private var model
+    @Environment(\.openWindow) private var openWindow
     var showsTimer = true
 
     var body: some View {
+        label
+            // The menu-bar label is always alive, so it provides the
+            // "reopen main window" action used by idle / reminder / wake.
+            .onAppear { model.openMainWindowAction = { openWindow(id: SceneID.main) } }
+    }
+
+    @ViewBuilder
+    private var label: some View {
         if showsTimer, let state = model.timerState, state.state != .idle {
             HStack(spacing: 4) {
                 Image(systemName: state.state == .running ? "circle.fill" : "pause.circle")
@@ -63,7 +72,15 @@ struct MenuBarPopover: View {
             }
 
             Divider().overlay(Palette.hairline).padding(.vertical, 8)
+            if model.timerState?.state == .running {
+                menuRow("Take a 15-min Break") { Task { await model.startCoffeeBreak() } }
+            } else if model.timerState?.state == .onBreak {
+                menuRow("End Break") { Task { await model.runAgent { try await $0.togglePlayPause() } } }
+            }
             menuRow("Open Dashboard…") { open(.dashboard) }
+            if let portal = model.environment?.configuration.portalOrigin {
+                menuRow("Open Web Portal…") { NSWorkspace.shared.open(portal) }
+            }
             menuRow("Apply for Leave…") { open(.applyLeave) }.disabled(model.phase != .ready)
             menuRow("Toggle Mini Timer") { openWindow(id: SceneID.miniTimer) }
             SettingsLink { menuLabel("Settings…") }.buttonStyle(.plain)

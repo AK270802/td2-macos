@@ -46,7 +46,10 @@ extension AppModel {
     /// the timer — the only timer logic lives in `common::timer_state`.
     func track(_ choice: TaskChoice) {
         let ref = AssignedWorkModel.ref(choice.task, in: choice.project)
-        Task { await runAgent { try await $0.selectTask(ref) } }
+        Task {
+            await ensureAgentSession()
+            await runAgent { try await $0.selectTask(ref) }
+        }
     }
 }
 

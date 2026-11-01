@@ -44,6 +44,11 @@ public struct ProfileService: Sendable {
         try await api.send(Endpoint<UserOut>(.get, "/users/me"))
     }
 
+    /// `GET /users/{id}` (manager / admin) → `UserDetail` incl. `last_device_seen`.
+    public func user(_ id: UUID) async throws -> UserDetail {
+        try await api.send(Endpoint<UserDetail>(.get, "/users/\(id.uuidString.lowercased())"))
+    }
+
     /// `GET /users/profile` → `UserProfileOut` (manager name, leave summary).
     public func profile() async throws -> UserProfileOut {
         try await api.send(Endpoint<UserProfileOut>(.get, "/users/profile"))
@@ -188,6 +193,14 @@ public struct InsightsService: Sendable {
     /// `GET /analytics/productivity-score`.
     public func productivity(range: DateRange, userId: UUID? = nil) async throws -> ProductivityScoreResponse {
         try await api.send(Endpoint<ProductivityScoreResponse>(.get, "/analytics/productivity-score", query: rangedQuery(range, userId: userId)))
+    }
+
+    /// `GET /analytics/timeline` — synced activity events (app, domain, idle…).
+    public func timeline(range: DateRange, userId: UUID? = nil, page: Int = 1, pageSize: Int = 200) async throws -> TimelineResponse {
+        var query = rangedQuery(range, userId: userId)
+        query.add("page", page)
+        query.add("page_size", pageSize)
+        return try await api.send(Endpoint<TimelineResponse>(.get, "/analytics/timeline", query: query))
     }
 
     /// `GET /analytics/app-usage`.

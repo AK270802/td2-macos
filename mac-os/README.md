@@ -28,3 +28,18 @@ Build: see BUILD_AND_RELEASE.md. **Not yet compiled** — first verification hap
 - Native: menu-bar extra, floating mini timer, Dock badge, local notifications, keyboard shortcuts, quit-while-tracking confirmation, offline banner, agent-error alerts with Reconnect, update dialog (no native feed yet, gap B7), six-step in-app onboarding.
 - Installers: CI job 6 builds `EffiLens-macOS-universal.dmg` / `.pkg` / `EffiLens.app.zip` (ad-hoc signed, **not notarised**). Install/test: [INSTALL_AND_TEST.md](INSTALL_AND_TEST.md).
 - Not supported by the backend (shown disabled or explained, never faked): desktop SSO (B2), live presence (B3), employee manual entries (B5), report export from the app (links to the portal), native auto-update (B7).
+
+## Unified behaviour with go-agent, the web portal and core-services
+
+| Area | Source of truth | Native implementation |
+|---|---|---|
+| Idle warning | go-agent `OnIdleWarning`, Tauri `IdleWarning.tsx` | Window restored and floated; 60 s countdown; *Still working* → `idle_keep_working`; *On a break* or timeout → `idle_auto_stop` (back-dated), plus a "Tracking Stopped" notification |
+| Inactive reminder | go-agent `notifier.go` | Same interval setting (0/5/10/15/30/60), same text; also restores the window |
+| Sleep / wake | go-agent `OnSystemWake` | Agent pauses at sleep (`pause_for_sleep`); on wake the app restores the window, refreshes the session after 10 s, re-hands it to the agent and syncs |
+| Stay signed in | go-agent token refresh on start/resume | Session re-handed to the agent before start/resume; single-flight refresh in `SessionManager` |
+| Tray / menu bar | go-agent tray | 15-min Coffee Break, End Break, Open Dashboard, Open Web Portal, Quit (stop + final sync) |
+| Activity | core-services `GET /analytics/timeline` (same as the portal) | Synced events with app, domain, window title, idle, category; plus the local unsynced count |
+| Team presence | core-services `GET /users/{id}.last_device_seen`, `/dashboard/team.activity_level` | "Active · 3 min ago" / "Last seen …" plus activity level |
+| Leave rules | frontend `lib/leave-utils.ts` (mirrors the backend) | Status labels (Awaiting manager / admin); edit and cancel rules; approver level; payment labels (Paid / Unpaid / Paid + Unpaid / At approval); Full / Half Day; portal filter chips; balance rows; Edit request with `client_updated_at` |
+
+Not available in core-services (not shown, never faked): project progress or client, task priority / due date / estimate, Annual / Sick / Casual leave types.

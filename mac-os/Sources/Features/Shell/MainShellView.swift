@@ -66,6 +66,11 @@ struct MainShellView: View {
         .onChange(of: model.requestedRoute) { _, route in
             if let route { navigator.go(route); model.requestedRoute = nil }
         }
+        .sheet(isPresented: Binding(get: { model.idleWarningStartedAt != nil }, set: { _ in })) {
+            if let startedAt = model.idleWarningStartedAt {
+                IdleWarningSheet(startedAt: startedAt)
+            }
+        }
         .alert(
             "Tracking agent",
             isPresented: Binding(get: { model.agentCommandError != nil }, set: { if !$0 { model.agentCommandError = nil } }),

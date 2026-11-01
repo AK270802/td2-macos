@@ -104,3 +104,15 @@ public struct PagedResponse<Item: Decodable & Sendable>: Decodable, Sendable {
 
 /// `UserOut` list — `GET /users` (manager/admin; used for team screens).
 public typealias UserListResponse = PagedResponse<UserOut>
+
+
+/// `UserDetail` — `GET /users/{id}` (manager / admin). `last_device_seen` is
+/// the most recent agent check-in, used for team presence.
+public struct UserDetail: Decodable, Sendable, Equatable {
+    public let id: UUID
+    public let email: String
+    public let displayName: String
+    public let role: String
+    public let isActive: Bool
+    public let lastDeviceSeen: Date?
+}

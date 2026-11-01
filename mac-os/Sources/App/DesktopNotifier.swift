@@ -58,6 +58,17 @@ enum DesktopNotifier {
         try? await UNUserNotificationCenter.current().add(request)
     }
 
+    /// Generic local notification (respects the user's preference).
+    static func post(title: String, body: String) async {
+        guard Prefs.bool(Prefs.desktopNotifications) else { return }
+        guard await authorizationStatus() == .authorized else { return }
+        let content = UNMutableNotificationContent()
+        content.title = title
+        content.body = body
+        let request = UNNotificationRequest(identifier: "effilens-\(UUID().uuidString)", content: content, trigger: nil)
+        try? await UNUserNotificationCenter.current().add(request)
+    }
+
     /// Same wording as the go-agent "tracker inactive" reminder.
     static func postInactiveReminder() async {
         guard await authorizationStatus() == .authorized else { return }
@@ -111,6 +122,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         case .alertSecondButtonReturn:
             Task { @MainActor in
                 await model.runAgent { try await $0.stopTracking() }
+                await model.runAgentSilently { try await $0.syncNow() }
                 sender.reply(toApplicationShouldTerminate: true)
             }
             return .terminateLater
@@ -145,18 +157,20 @@ final class InactiveReminder {
     private var stoppedAt: Date?
     private var lastNotified: Date?
 
-    func update(isTracking: Bool, now: Date = Date()) async {
+    @discardableResult
+    func update(isTracking: Bool, now: Date = Date()) async -> Bool {
         if isTracking {
             stoppedAt = nil
-            return
+            return false
         }
         if stoppedAt == nil { stoppedAt = now }
         let minutes = Prefs.reminderIntervalMin
-        guard minutes > 0, let stoppedAt else { return }
+        guard minutes > 0, let stoppedAt else { return false }
         let required = TimeInterval(minutes * 60)
-        guard now.timeIntervalSince(stoppedAt) >= required else { return }
-        if let lastNotified, lastNotified >= stoppedAt, now.timeIntervalSince(lastNotified) < required { return }
+        guard now.timeIntervalSince(stoppedAt) >= required else { return false }
+        if let lastNotified, lastNotified >= stoppedAt, now.timeIntervalSince(lastNotified) < required { return false }
         lastNotified = now
         await DesktopNotifier.postInactiveReminder()
+        return true
     }
 }

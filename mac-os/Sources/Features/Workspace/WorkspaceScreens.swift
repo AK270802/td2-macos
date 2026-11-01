@@ -71,7 +71,7 @@ final class ApprovalsViewModel {
     }
 
     func mode(for application: LeaveApplication) -> LeaveDetailView.Mode {
-        application.statusValue == .pendingAdmin && role.atLeast(.admin) ? .adminReview : .managerReview
+        LeaveRules.approverLevel(application, role: role) == .admin ? .adminReview : .managerReview
     }
 
     func approve(_ a: LeaveApplication) async {
@@ -179,10 +179,42 @@ struct ApprovalsView: View {
 
 // MARK: - Team (prototype V.team; GET /dashboard/team, manager+)
 
+/// Presence derived from the agent's last check-in (`last_device_seen`).
+/// Agents check in on every sync, so this is "recently active", not a live
+/// idle indicator — the label always says when the member was last seen.
+struct Presence: Equatable {
+    let lastSeen: Date?
+
+    var isActive: Bool { lastSeen.map { Date().timeIntervalSince($0) < 15 * 60 } ?? false }
+
+    var label: String {
+        guard let lastSeen else { return "Never seen" }
+        return isActive ? "Active · \(Format.relative(lastSeen))" : "Last seen \(Format.relative(lastSeen))"
+    }
+
+    var kind: Pill.Kind { isActive ? .ok : (lastSeen == nil ? .gray : .wait) }
+}
+
+/// `activity_level` (very_high … very_low) → label + pill tint.
+enum ActivityLevelLabel {
+    static func text(_ raw: String) -> String {
+        raw.replacingOccurrences(of: "_", with: " ").capitalized + " activity"
+    }
+    static func kind(_ raw: String) -> Pill.Kind {
+        switch raw {
+        case "very_high", "high": return .ok
+        case "medium": return .blue
+        case "low": return .wait
+        default: return .gray
+        }
+    }
+}
+
 struct TeamView: View {
     @Environment(Navigator.self) private var navigator
     @State private var period: ReportPeriod = .today
     @State private var data: Loadable<TeamDashboardResponse> = .idle
+    @State private var presence: [UUID: Presence] = [:]
     private let environment: AppEnvironment
 
     init(environment: AppEnvironment) { self.environment = environment }
@@ -198,13 +230,13 @@ struct TeamView: View {
             HStack {
                 PeriodPicker(period: $period)
                 Spacer()
-                Text("Live presence isn't available from the server yet.").font(Typo.caption).foregroundStyle(Palette.textTertiary)
+                Text("Presence = last agent check-in").font(Typo.caption).foregroundStyle(Palette.textTertiary)
             }
             LoadStateView(state: data, retry: { Task { await load() } }) { team in
                 let members = team.mostHoursUsers.map { Member(item: $0, tracking: true) } + team.usersNotTracking.map { Member(item: $0, tracking: false) }
                 EqualColumns(count: 3) {
-                    StatTile(label: "Tracked time", value: "\(team.mostHoursUsers.count)", suffix: "/ \(members.count)")
-                    StatTile(label: "No activity", value: "\(team.usersNotTracking.count)")
+                    StatTile(label: "Active now", value: "\(members.filter { presence[$0.id]?.isActive == true }.count)", suffix: "/ \(members.count)")
+                    StatTile(label: "Not tracking", value: "\(team.usersNotTracking.count)")
                     StatTile(label: "Team hours", value: Format.duration(team.summary.workedSec))
                 }
                 if members.isEmpty {
@@ -233,11 +265,16 @@ struct TeamView: View {
                     Spacer(minLength: 0)
                 }
                 HStack {
-                    Pill(text: m.tracking ? "● Tracked \(period == .today ? "today" : "this period")" : "● No activity", kind: m.tracking ? .ok : .gray)
+                    if let p = presence[m.id] {
+                        Pill(text: "● \(p.label)", kind: p.kind)
+                    } else {
+                        Pill(text: m.tracking ? "● Tracked" : "● No activity", kind: m.tracking ? .ok : .gray)
+                    }
                     Spacer()
                     Text(Format.duration(m.item.totalSec)).font(Typo.mono)
                 }
                 .padding(.top, 4)
+                Pill(text: ActivityLevelLabel.text(m.item.activityLevel), kind: ActivityLevelLabel.kind(m.item.activityLevel))
             }
         }
         .buttonStyle(.plain)
@@ -245,8 +282,31 @@ struct TeamView: View {
 
     private func load() async {
         if data.value == nil { data = .loading }
-        do { data = .loaded(try await environment.insights.teamDashboard(range: period.range)) }
-        catch { data = .failed(DashboardViewModel.map(error)) }
+        do {
+            let team = try await environment.insights.teamDashboard(range: period.range)
+            data = .loaded(team)
+            await loadPresence(ids: (team.mostHoursUsers + team.usersNotTracking).map(\.userId))
+        } catch { data = .failed(DashboardViewModel.map(error)) }
+    }
+
+    /// One `GET /users/{id}` per member (manager/admin), at most 6 in flight.
+    private func loadPresence(ids: [UUID]) async {
+        let profile = environment.profile
+        var result: [UUID: Presence] = [:]
+        for chunk in stride(from: 0, to: ids.count, by: 6).map({ Array(ids[$0..<min($0 + 6, ids.count)]) }) {
+            await withTaskGroup(of: (UUID, UserDetail?).self) { group in
+                for id in chunk {
+                    group.addTask {
+                        let detail = try? await profile.user(id)
+                        return (id, detail)
+                    }
+                }
+                for await (id, detail) in group {
+                    if let detail { result[id] = Presence(lastSeen: detail.lastDeviceSeen) }
+                }
+            }
+        }
+        presence = result
     }
 }
 
@@ -258,6 +318,7 @@ struct MemberDetailView: View {
     @Environment(Navigator.self) private var navigator
     @State private var data: Loadable<IndividualDashboardResponse> = .idle
     @State private var balance: LeaveBalance?
+    @State private var detail: UserDetail?
 
     var body: some View {
         Page {
@@ -270,7 +331,13 @@ struct MemberDetailView: View {
                         Text(member.email).font(Typo.body).foregroundStyle(Palette.textSecondary)
                     }
                     Spacer()
-                    Pill(text: "● \(member.totalSec > 0 ? "Tracked" : "No activity") · \(period.rawValue)", kind: member.totalSec > 0 ? .ok : .gray)
+                    VStack(alignment: .trailing, spacing: 6) {
+                        if let detail {
+                            let p = Presence(lastSeen: detail.lastDeviceSeen)
+                            Pill(text: "● \(p.label)", kind: p.kind)
+                        }
+                        Pill(text: ActivityLevelLabel.text(member.activityLevel), kind: ActivityLevelLabel.kind(member.activityLevel))
+                    }
                 }
             }
             LoadStateView(state: data, retry: { Task { await load() } }) { d in
@@ -302,6 +369,7 @@ struct MemberDetailView: View {
         do { data = .loaded(try await environment.insights.individualDashboard(range: period.range, userId: member.userId)) }
         catch { data = .failed(DashboardViewModel.map(error)) }
         balance = try? await environment.leave.balance(userId: member.userId)
+        detail = try? await environment.profile.user(member.userId)
     }
 }
 
@@ -565,83 +633,93 @@ struct NotificationsView: View {
     }
 }
 
-// MARK: - Activity timeline (prototype V.activity)
+// MARK: - Activity timeline (prototype V.activity; GET /analytics/timeline)
 
-/// Local agent events (type, time, duration — never payload content) merged
-/// with today's synced sessions, newest first.
+/// The user's synced activity events (app, website domain, idle, meetings) —
+/// the same stream the portal's Activity page shows — plus how many events are
+/// still queued on this Mac.
 struct ActivityView: View {
     @Environment(AppModel.self) private var model
-    @State private var entries: Loadable<[Entry]> = .idle
-    private let work: WorkService
+    @State private var period: ReportPeriod = .today
+    @State private var data: Loadable<TimelineResponse> = .idle
+    private let insights: InsightsService
 
-    init(environment: AppEnvironment) { work = environment.work }
-
-    struct Entry: Identifiable {
-        let id: String
-        let date: Date
-        let text: String
-        let tone: TimelineTone
-    }
+    init(environment: AppEnvironment) { insights = environment.insights }
 
     var body: some View {
         Page {
-            Card {
-                LoadStateView(state: entries, emptyTitle: "No activity yet today", emptyMessage: "Events appear here while you track time.",
-                              emptySymbol: "list.bullet.rectangle", isEmpty: { $0.isEmpty }, retry: { Task { await load() } }) { list in
+            HStack {
+                PeriodPicker(period: $period, options: [.today, .week])
+                Spacer()
+                if let pending = model.syncStatus?.pendingEvents, pending > 0 {
+                    Pill(text: "\(pending) event\(pending == 1 ? "" : "s") waiting to sync from this Mac", kind: .wait)
+                }
+            }
+            LoadStateView(state: data, emptyTitle: "No activity yet", emptyMessage: "Events appear here after the agent syncs (every few minutes while you track).",
+                          emptySymbol: "list.bullet.rectangle", isEmpty: { $0.events.isEmpty }, retry: { Task { await load() } }) { t in
+                EqualColumns(count: 3) {
+                    StatTile(label: "Active", value: Format.duration(t.totalActiveSec))
+                    StatTile(label: "Idle", value: Format.duration(t.totalIdleSec))
+                    StatTile(label: "Events", value: "\(t.totalEvents)")
+                }
+                Card {
+                    let events = t.events.sorted { $0.ts > $1.ts }
                     VStack(alignment: .leading, spacing: 0) {
-                        ForEach(Array(list.enumerated()), id: \.element.id) { index, e in
-                            TimelineItem(tone: e.tone, isLast: index == list.count - 1) {
-                                VStack(alignment: .leading, spacing: 1) {
-                                    Text(Format.time(e.date)).font(.system(size: 11, design: .monospaced)).foregroundStyle(Palette.textTertiary)
-                                    Text(e.text).font(Typo.body)
+                        ForEach(Array(events.enumerated()), id: \.element.id) { index, e in
+                            TimelineItem(tone: Self.tone(e), isLast: index == events.count - 1) {
+                                HStack(alignment: .top) {
+                                    VStack(alignment: .leading, spacing: 1) {
+                                        Text(Format.time(e.ts)).font(.system(size: 11, design: .monospaced)).foregroundStyle(Palette.textTertiary)
+                                        Text(Self.title(e)).font(Typo.body).lineLimit(1)
+                                        if let title = e.windowTitle, !title.isEmpty, e.eventType != "idle" {
+                                            Text(title).font(Typo.caption).foregroundStyle(Palette.textTertiary).lineLimit(1)
+                                        }
+                                    }
+                                    Spacer()
+                                    if let category = e.category { Pill(text: Self.categoryLabel(category), kind: Self.categoryKind(category)) }
+                                    Text(Format.duration(e.durationSec)).font(Typo.mono).frame(width: 70, alignment: .trailing)
                                 }
                             }
                         }
                     }
                 }
+                if t.totalEvents > t.events.count {
+                    Text("Showing the latest \(t.events.count) of \(t.totalEvents) events.").font(Typo.caption).foregroundStyle(Palette.textTertiary)
+                }
             }
-            Text("Window titles, app names and websites are not shown here. Synced sessions come from the server; other events are recorded on this Mac.")
-                .font(Typo.caption).foregroundStyle(Palette.textTertiary)
         }
-        .task { await load() }
+        .task(id: period) { await load() }
     }
 
-    private static func describe(_ type: String) -> (String, TimelineTone) {
-        switch type {
-        case "idle", "idle_start": return ("Idle time detected", .no)
-        case "idle_end": return ("Returned from idle", .accent)
-        case "meeting", "meeting_start": return ("Meeting detected", .accent)
-        case "break", "break_start": return ("Break started", .accent)
-        case "screenshot": return ("Screenshot captured (blurred)", .accent)
-        case "app_switch", "active_window", "activity": return ("Activity recorded", .accent)
-        default: return (type.replacingOccurrences(of: "_", with: " ").capitalized, .accent)
+    private static func title(_ e: TimelineEvent) -> String {
+        switch e.eventType {
+        case "idle": return "Idle"
+        case "meeting": return "Meeting\(e.appName.map { " · \($0)" } ?? "")"
+        case "browser": return e.domain ?? e.appName ?? "Browser"
+        default: return e.appName ?? e.domain ?? e.eventType.capitalized
+        }
+    }
+
+    private static func tone(_ e: TimelineEvent) -> TimelineTone {
+        if e.eventType == "idle" { return .no }
+        return e.category == "productive" ? .ok : .accent
+    }
+
+    private static func categoryLabel(_ raw: String) -> String {
+        raw.replacingOccurrences(of: "_", with: " ").capitalized
+    }
+
+    private static func categoryKind(_ raw: String) -> Pill.Kind {
+        switch raw {
+        case "productive": return .ok
+        case "non_productive", "unproductive": return .no
+        default: return .gray
         }
     }
 
     private func load() async {
-        if entries.value == nil { entries = .loading }
-        var list: [Entry] = []
-        var failure: AppError?
-        if let agent = model.environment?.agent, model.isAgentConnected {
-            if let events = try? await agent.recentEvents(limit: 30) {
-                list += events.map { e in
-                    let d = Self.describe(e.eventType)
-                    let text = e.durationSec > 0 ? "\(d.0) · \(Format.duration(Int(e.durationSec)))" : d.0
-                    return Entry(id: e.id.uuidString, date: e.date, text: text, tone: d.1)
-                }
-            }
-        }
-        do {
-            let logs = try await work.timeLogs(range: .today(), pageSize: 100).items
-            list += logs.map { log in
-                Entry(id: log.id.uuidString, date: log.endedAt,
-                      text: log.isBreak == true ? "Break · \(Format.duration(log.durationSec))" : "Tracked “\(log.taskName)” (\(Format.duration(log.durationSec))) — synced",
-                      tone: .ok)
-            }
-        } catch {
-            failure = DashboardViewModel.map(error)
-        }
-        if list.isEmpty, let failure { entries = .failed(failure); return }
-        entries = .loaded(list.sorted { $0.date > $1.date })
+        if data.value == nil { data = .loading }
+        do { data = .loaded(try await insights.timeline(range: period.range, pageSize: 200)) }
+        catch { data = .failed(DashboardViewModel.map(error)) }
     }
 }

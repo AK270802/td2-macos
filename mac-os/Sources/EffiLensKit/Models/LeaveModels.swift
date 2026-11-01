@@ -15,8 +15,8 @@ public enum LeaveStatus: String, Codable, Sendable, CaseIterable {
 
     public var displayName: String {
         switch self {
-        case .pendingManager: return "Pending manager"
-        case .pendingAdmin: return "Pending admin"
+        case .pendingManager: return "Awaiting manager"
+        case .pendingAdmin: return "Awaiting admin"
         case .approved: return "Approved"
         case .rejected: return "Rejected"
         case .cancelled: return "Cancelled"
@@ -32,10 +32,10 @@ public enum LeaveKind: String, Codable, Sendable, CaseIterable {
 
     public var displayName: String {
         switch self {
-        case .paid: return "Paid leave"
-        case .unpaid: return "Unpaid leave"
-        case .pending: return "To be determined"
-        case .mixed: return "Paid + unpaid"
+        case .paid: return "Paid"
+        case .unpaid: return "Unpaid"
+        case .pending: return "At approval"
+        case .mixed: return "Paid + Unpaid"
         case .holiday: return "Holiday"
         case .compensatory: return "Comp-off"
         }
@@ -50,9 +50,9 @@ public enum LeaveSource: String, Codable, Sendable {
 
     public var displayName: String {
         switch self {
-        case .manual: return "Requested"
-        case .automatedDeficit: return "Automatic (hours shortfall)"
-        case .holidayCompoff: return "Holiday comp-off"
+        case .manual: return "Manual"
+        case .automatedDeficit: return "Automatic"
+        case .holidayCompoff: return "Comp-off"
         }
     }
 }
