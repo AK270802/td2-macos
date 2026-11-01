@@ -38,10 +38,12 @@ body{width:620px;height:400px;background:
 h3{font-family:IS;font-weight:400;font-size:30px;text-align:center;margin-top:26px}
 h3 em{font-style:italic;color:#F0C779}
 p{text-align:center;color:rgba(20,27,44,.68);margin-top:4px;font-size:13px}
-.arrow{position:absolute;left:292px;top:180px;font-size:36px;color:#F0C779}
+.arrow{position:absolute;left:292px;top:190px;font-size:36px;color:#F0C779}
+.note{position:absolute;left:0;right:0;top:340px;text-align:center;font-size:11.5px;color:rgba(20,27,44,.55)}
 </style></head><body>
 <h3>Install <em>EffiLens</em></h3>
-<p>Drag EffiLens to your Applications folder — or use the guided installer.</p>
+<p>Drag EffiLens to your Applications folder.</p>
+<div class="note">Prefer a guided install? Use EffiLens-macOS-universal.pkg.</div>
 <div class="arrow">⟶</div>
 </body></html>`;
 

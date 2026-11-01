@@ -158,7 +158,6 @@ DMG_DONE=0
 if [ -n "$ASSETS" ] && [ -f "$ASSETS/dmg-background.png" ] && command -v create-dmg >/dev/null; then
   mkdir -p "$STAGE/dmgsrc"
   ditto "$APP" "$STAGE/dmgsrc/EffiLens.app"
-  cp "$PKG" "$STAGE/dmgsrc/Install EffiLens.pkg"
   tiffutil -cathidpicheck "$ASSETS/dmg-background.png" "$ASSETS/dmg-background@2x.png" -out "$STAGE/dmg-background.tiff" >/dev/null 2>&1 \
     || cp "$ASSETS/dmg-background.png" "$STAGE/dmg-background.tiff"
   rm -f "$DMG"
@@ -167,10 +166,9 @@ if [ -n "$ASSETS" ] && [ -f "$ASSETS/dmg-background.png" ] && command -v create-
       --background "$STAGE/dmg-background.tiff" \
       --window-pos 200 120 --window-size 620 428 \
       --icon-size 96 --text-size 13 \
-      --icon "EffiLens.app" 170 205 \
-      --app-drop-link 450 205 \
-      --icon "Install EffiLens.pkg" 310 318 \
-      --hide-extension "EffiLens.app" --hide-extension "Install EffiLens.pkg" \
+      --icon "EffiLens.app" 170 215 \
+      --app-drop-link 450 215 \
+      --hide-extension "EffiLens.app" \
       --no-internet-enable \
       "$DMG" "$STAGE/dmgsrc" >/dev/null; then
     DMG_DONE=1
@@ -184,13 +182,12 @@ if [ "$DMG_DONE" = 0 ]; then
   # "Resource busy". Build a blank writable image, copy in, convert; retry.
   mkdir -p "$STAGE/dmg"
   ditto "$APP" "$STAGE/dmg/EffiLens.app"
-  SIZE_MB=$(( $(du -sm "$STAGE/dmg" | cut -f1) + $(du -sm "$PKG" | cut -f1) + 40 ))
+  SIZE_MB=$(( $(du -sm "$STAGE/dmg" | cut -f1) + 40 ))
   RW="$STAGE/rw.dmg"
   retry hdiutil create -size "${SIZE_MB}m" -fs HFS+ -volname "EffiLens $VERSION" -ov "$RW" >/dev/null
   mkdir -p "$STAGE/rwmnt"
   retry hdiutil attach "$RW" -nobrowse -noverify -mountpoint "$STAGE/rwmnt" -quiet
   ditto "$STAGE/dmg/EffiLens.app" "$STAGE/rwmnt/EffiLens.app"
-  cp "$PKG" "$STAGE/rwmnt/Install EffiLens.pkg"
   ln -s /Applications "$STAGE/rwmnt/Applications"
   sync
   retry hdiutil detach "$STAGE/rwmnt" -quiet || retry hdiutil detach "$STAGE/rwmnt" -force -quiet

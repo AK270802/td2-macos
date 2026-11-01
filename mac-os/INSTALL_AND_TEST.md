@@ -34,7 +34,7 @@ shasum -a 256 -c SHA256SUMS-universal.txt
 
 ## 2. Choose DMG or PKG
 
-- **DMG**: open it and drag EffiLens onto the Applications shortcut (window styled like the prototype's installer). The DMG also contains **Install EffiLens.pkg**, the guided installer.
+- **DMG**: open it and drag EffiLens onto the Applications shortcut (window styled like the prototype's installer). The guided installer is the separate `EffiLens-macOS-universal.pkg`.
 - **PKG**: Installer.app puts `EffiLens.app` in `/Applications`. The package contains no scripts and writes nothing outside `/Applications/EffiLens.app`, and installing again upgrades in place. The tracking agent and its LaunchAgent plist live inside the app bundle.
 
 Install only one of them. Both produce the same app.
