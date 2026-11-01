@@ -71,6 +71,11 @@ if grep -rIl -E "(BEGIN (RSA|EC|OPENSSH) PRIVATE KEY|wp_refresh_token=[A-Za-z0-9
 # Unsigned arm64 code will not launch; an ad-hoc signature lets the
 # development build run after the user approves it in Privacy & Security.
 # This is NOT a Developer ID signature and the app is NOT notarised.
+# Nested code first: Debug builds carry EffiLens.debug.dylib / __preview.dylib
+# (Xcode 16 debug-dylib mode); any embedded frameworks/dylibs are signed too.
+while IFS= read -r -d '' nested; do
+  codesign --force --sign - --timestamp=none "$nested"
+done < <(find "$APP/Contents" \( -name "*.dylib" -o -name "*.framework" \) -print0)
 if [ -f "$AGENT" ]; then
   codesign --force --sign - --options runtime --timestamp=none "$AGENT"
 fi
