@@ -125,6 +125,8 @@ enum Metrics {
     static let mainWindow = CGSize(width: 1200, height: 780)
     static let mainWindowMin = CGSize(width: 1000, height: 560)
     static let onboardingWindow = CGSize(width: 820, height: 560)
+    /// Standard macOS title bar height (transparent, overlays content).
+    static let titleBarHeight: CGFloat = 28
     static let sidebarWidth: CGFloat = 228
     static let toolbarHeight: CGFloat = 52
     static let onboardingArtWidth: CGFloat = 340

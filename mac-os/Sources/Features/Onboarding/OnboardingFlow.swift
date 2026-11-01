@@ -23,10 +23,13 @@ struct OnboardingWindow<Content: View>: View {
                 .padding(EdgeInsets(top: 54, leading: 44, bottom: 28, trailing: 44))
                 .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         }
-        .frame(width: Metrics.onboardingWindow.width, height: Metrics.onboardingWindow.height)
+        // Sized to the window minus the title bar; ignoresSafeArea then
+        // extends it under the transparent title bar, so the window is exactly
+        // 820 × 560 (otherwise SwiftUI adds the 28 pt inset below the content).
+        .frame(width: Metrics.onboardingWindow.width, height: Metrics.onboardingWindow.height - Metrics.titleBarHeight)
+        .ignoresSafeArea()
         .background(GlassBackdrop())
         .clipped()
-        .ignoresSafeArea()
     }
 }
 
