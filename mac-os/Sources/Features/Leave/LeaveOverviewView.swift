@@ -60,13 +60,14 @@ final class LeaveOverviewViewModel {
     }
 }
 
-/// Leave Overview — prototype layout: balance rings, pending & recent
-/// requests, upcoming holidays. Leave types are the backend's fixed set
-/// (paid / unpaid / comp-off); the prototype's Annual/Sick/Casual split is
-/// not supported by core-services and is not faked.
+/// Leave Overview — prototype `V.leave`: hero "Time off, simplified.";
+/// 4 ring cards; Pending & recent (1 fr) + Upcoming holidays (1 fr).
+/// Categories are the backend's real ones (paid / comp-off / unpaid /
+/// carry-forward); the prototype's Annual/Sick split is not supported by
+/// core-services and is not faked (gap B8).
 struct LeaveOverviewView: View {
+    @Environment(Navigator.self) private var navigator
     @State private var viewModel: LeaveOverviewViewModel
-    @State private var pendingWithdrawal: LeaveApplication?
     let onNavigate: (Route) -> Void
 
     init(environment: AppEnvironment, onNavigate: @escaping (Route) -> Void) {
@@ -75,177 +76,99 @@ struct LeaveOverviewView: View {
     }
 
     var body: some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: Space.xl) {
-                balanceSection
-                HStack(alignment: .top, spacing: Space.l) {
-                    recentSection
-                    holidaySection.frame(maxWidth: 360)
+        Page {
+            HeroTitle(prefix: "Time ", emphasis: "off", suffix: ", simplified.").padding(.bottom, 4)
+            LoadStateView(state: viewModel.balance, retry: { Task { await viewModel.loadBalance() } }) { b in
+                EqualColumns(count: 4) {
+                    ringCard("Paid Leave", remaining: b.paidRemaining, total: b.paidAllocated, used: b.paidUsed, tint: Palette.accent)
+                    ringCard("Comp-off", remaining: b.compOffRemaining, total: b.compOffBalance, used: b.compOffUsed, tint: Palette.okFill)
+                    valueCard("Unpaid Leave", value: b.unpaidUsed, caption: "days taken this year", tint: Palette.violetFill)
+                    valueCard("Carry Forward", value: b.carryForward, caption: "days from last year", tint: Palette.blueFill)
                 }
             }
-            .padding(Space.xl)
-            .frame(maxWidth: 1240, alignment: .leading)
+            EqualColumns(count: 2) {
+                recentCard
+                holidaysCard
+            }
         }
         .task { await viewModel.load() }
-        .confirmationDialog(
-            "Withdraw this leave request?",
-            isPresented: Binding(get: { pendingWithdrawal != nil }, set: { if !$0 { pendingWithdrawal = nil } }),
-            presenting: pendingWithdrawal
-        ) { application in
-            Button("Withdraw Request", role: .destructive) { Task { await viewModel.withdraw(application) } }
-        } message: { application in
-            Text("\(Format.dateRange(application.startDate, application.endDate)) · \(Format.days(application.durationDays)) day(s). Your approver will be notified.")
-        }
-        .alert(
-            "Couldn't withdraw request",
-            isPresented: Binding(get: { viewModel.actionError != nil }, set: { if !$0 { viewModel.actionError = nil } }),
-            presenting: viewModel.actionError
-        ) { _ in
-            Button("OK", role: .cancel) {}
-        } message: { error in
-            Text(error.userMessage)
-        }
+        .alert("Couldn't withdraw request",
+               isPresented: Binding(get: { viewModel.actionError != nil }, set: { if !$0 { viewModel.actionError = nil } }),
+               presenting: viewModel.actionError) { _ in Button("OK", role: .cancel) {} } message: { Text($0.userMessage) }
     }
 
-    private var balanceSection: some View {
-        Card("Balance \(Calendar.current.component(.year, from: Date()).formatted(.number.grouping(.never)))",
-             trailing: AnyView(Button("Apply for Leave") { onNavigate(.applyLeave) }.buttonStyle(.borderedProminent))) {
-            LoadStateView(state: viewModel.balance, retry: { Task { await viewModel.loadBalance() } }) { balance in
-                HStack(alignment: .top, spacing: Space.xxl) {
-                    LargeBalanceRing(title: "Paid leave", remaining: balance.paidRemaining, total: balance.paidAllocated,
-                                     detail: "\(Format.days(balance.paidUsed)) used of \(Format.days(balance.paidAllocated))")
-                    LargeBalanceRing(title: "Comp-off", remaining: balance.compOffRemaining, total: balance.compOffBalance,
-                                     detail: "\(Format.days(balance.compOffUsed)) used of \(Format.days(balance.compOffBalance))")
-                    VStack(alignment: .leading, spacing: Space.m) {
-                        metric("Carried forward", "\(Format.days(balance.carryForward)) d")
-                        metric("Unpaid taken", "\(Format.days(balance.unpaidUsed)) d")
-                        if let reserved = balance.holidayReserved, reserved.doubleValue > 0 {
-                            metric("Reserved for holidays", "\(Format.days(reserved)) d")
-                        }
+    private func ringCard(_ title: String, remaining: FlexibleDecimal?, total: FlexibleDecimal, used: FlexibleDecimal, tint: Color) -> some View {
+        Card {
+            VStack(spacing: 0) {
+                ProgressRing(progress: total.doubleValue > 0 ? (remaining?.doubleValue ?? 0) / total.doubleValue : 0, lineWidth: 8, tint: tint) {
+                    VStack(spacing: 0) {
+                        Text(Format.days(remaining)).font(.system(size: 22, weight: .semibold, design: .monospaced))
+                        Text("left").font(.system(size: 10)).foregroundStyle(Palette.textTertiary)
                     }
-                    Spacer(minLength: 0)
                 }
+                .frame(width: 96, height: 96)
+                Text(title).font(Typo.bodyEmphasis).padding(.top, 10)
+                Text("\(Format.days(used)) used of \(Format.days(total))").font(Typo.caption).foregroundStyle(Palette.textTertiary)
             }
+            .frame(maxWidth: .infinity)
         }
     }
 
-    private func metric(_ label: String, _ value: String) -> some View {
-        VStack(alignment: .leading, spacing: Space.xxs) {
-            Text(label).font(Typo.caption).foregroundStyle(Palette.textSecondary)
-            Text(value).font(Typo.heading).monospacedDigit()
+    private func valueCard(_ title: String, value: FlexibleDecimal, caption: String, tint: Color) -> some View {
+        Card {
+            VStack(spacing: 0) {
+                ZStack {
+                    Circle().stroke(tint.opacity(0.25), lineWidth: 8)
+                    Text(Format.days(value)).font(.system(size: 22, weight: .semibold, design: .monospaced))
+                }
+                .frame(width: 96, height: 96)
+                Text(title).font(Typo.bodyEmphasis).padding(.top, 10)
+                Text(caption).font(Typo.caption).foregroundStyle(Palette.textTertiary)
+            }
+            .frame(maxWidth: .infinity)
         }
     }
 
-    private var recentSection: some View {
-        Card("Pending & recent", trailing: AnyView(Button("My Requests") { onNavigate(.myRequests) }.buttonStyle(.link))) {
-            LoadStateView(
-                state: viewModel.recent,
-                emptyTitle: "No leave requests yet",
-                emptyMessage: "Requests you submit will appear here with their approval status.",
-                emptySymbol: "tray",
-                isEmpty: { $0.isEmpty },
-                retry: { Task { await viewModel.loadRecent() } }
-            ) { applications in
+    private var recentCard: some View {
+        Card("Pending & recent", trailing: AnyView(CardLink("All requests") { onNavigate(.myRequests) })) {
+            LoadStateView(state: viewModel.recent, emptyTitle: "No leave requests yet", emptySymbol: "tray",
+                          isEmpty: { $0.isEmpty }, retry: { Task { await viewModel.loadRecent() } }) { items in
+                let shown = Array(items.prefix(3))
                 VStack(spacing: 0) {
-                    ForEach(applications) { application in
-                        LeaveApplicationRow(
-                            application: application,
-                            isWithdrawing: viewModel.withdrawing.contains(application.id),
-                            onWithdraw: { pendingWithdrawal = application }
-                        )
-                        if application.id != applications.last?.id { Divider().overlay(Palette.hairline) }
-                    }
-                }
-            }
-        }
-    }
-
-    private var holidaySection: some View {
-        Card("Upcoming holidays", trailing: AnyView(Button("All") { onNavigate(.holidays) }.buttonStyle(.link))) {
-            LoadStateView(
-                state: viewModel.holidays,
-                emptyTitle: "No upcoming holidays",
-                emptySymbol: "sun.max",
-                isEmpty: { $0.isEmpty },
-                retry: { Task { await viewModel.loadHolidays() } }
-            ) { holidays in
-                VStack(spacing: Space.s) {
-                    ForEach(holidays.prefix(6)) { holiday in
-                        HStack(spacing: Space.m) {
-                            DateBlock(date: holiday.date)
-                            VStack(alignment: .leading, spacing: Space.xxs) {
-                                Text(holiday.name).font(Typo.bodyEmphasis).lineLimit(1)
-                                if let description = holiday.description, !description.isEmpty {
-                                    Text(description).font(Typo.caption).foregroundStyle(Palette.textSecondary).lineLimit(1)
-                                }
+                    ForEach(Array(shown.enumerated()), id: \.element.id) { index, a in
+                        Button {
+                            navigator.leaveDetail = LeaveDetailContext(application: a, mode: .own, back: .leaveOverview)
+                        } label: {
+                            ListItemRow(title: "\(a.kind?.displayName ?? "Leave") · \(Format.days(a.durationDays)) day\(a.durationDays.doubleValue == 1 ? "" : "s")",
+                                        subtitle: Format.dateRange(a.startDate, a.endDate), bold: true, showsDivider: index < shown.count - 1) {
+                                IconTile(symbol: "leaf", tint: Palette.accent)
+                            } trailing: {
+                                LeaveStatusPill(status: a.statusValue)
                             }
-                            Spacer()
-                            if holiday.userCompoffClaimed == true { StatusPill(text: "Comp-off claimed", tone: .info) }
-                            else if holiday.userLeaveApplied == true { StatusPill(text: "Leave applied", tone: .info) }
                         }
+                        .buttonStyle(.plain)
                     }
                 }
             }
         }
     }
-}
 
-struct LeaveApplicationRow: View {
-    let application: LeaveApplication
-    let isWithdrawing: Bool
-    let onWithdraw: () -> Void
-
-    var body: some View {
-        HStack(spacing: Space.m) {
-            VStack(alignment: .leading, spacing: Space.xxs) {
-                HStack(spacing: Space.s) {
-                    Text(application.kind?.displayName ?? application.leaveType.capitalized).font(Typo.bodyEmphasis)
-                    Text("· \(Format.days(application.durationDays)) d").font(Typo.body).foregroundStyle(Palette.textSecondary)
-                }
-                Text(Format.dateRange(application.startDate, application.endDate))
-                    .font(Typo.caption).foregroundStyle(Palette.textSecondary)
-                if let reason = application.rejectionReason, application.statusValue == .rejected {
-                    Text("Reason: \(reason)").font(Typo.caption).foregroundStyle(Palette.danger).lineLimit(2)
-                }
-            }
-            Spacer()
-            LeaveStatusPill(status: application.statusValue)
-            if application.isWithdrawable {
-                if isWithdrawing {
-                    ProgressView().controlSize(.small)
-                } else {
-                    Button("Withdraw", action: onWithdraw).controlSize(.small)
-                }
-            }
-        }
-        .padding(.vertical, Space.s)
-    }
-}
-
-struct LargeBalanceRing: View {
-    let title: String
-    let remaining: FlexibleDecimal?
-    let total: FlexibleDecimal
-    let detail: String
-
-    private var progress: Double {
-        guard let remaining, total.doubleValue > 0 else { return 0 }
-        return remaining.doubleValue / total.doubleValue
-    }
-
-    var body: some View {
-        VStack(spacing: Space.s) {
-            ProgressRing(progress: progress, lineWidth: 9) {
+    private var holidaysCard: some View {
+        Card("Upcoming holidays", trailing: AnyView(CardLink("Calendar") { onNavigate(.holidays) })) {
+            LoadStateView(state: viewModel.holidays, emptyTitle: "No upcoming holidays", emptySymbol: "sun.max",
+                          isEmpty: { $0.isEmpty }, retry: { Task { await viewModel.loadHolidays() } }) { items in
+                let shown = Array(items.prefix(4))
                 VStack(spacing: 0) {
-                    Text(Format.days(remaining)).font(.system(size: 24, weight: .semibold, design: .monospaced))
-                    Text("left").font(Typo.caption).foregroundStyle(Palette.textSecondary)
+                    ForEach(Array(shown.enumerated()), id: \.element.id) { index, h in
+                        ListItemRow(title: h.name, subtitle: h.date.date()?.formatted(.dateTime.weekday(.wide).day().month(.wide)) ?? h.date.description,
+                                    bold: true, showsDivider: index < shown.count - 1) {
+                            IconTile(symbol: "sun.max", tint: Palette.okFill)
+                        } trailing: {
+                            Pill(text: "Holiday", kind: .ok)
+                        }
+                    }
                 }
             }
-            .frame(width: 104, height: 104)
-            Text(title).font(Typo.bodyEmphasis)
-            Text(detail).font(Typo.caption).foregroundStyle(Palette.textSecondary)
         }
-        .accessibilityElement(children: .ignore)
-        .accessibilityLabel("\(title): \(Format.days(remaining)) days left. \(detail).")
     }
 }

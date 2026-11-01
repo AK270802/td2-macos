@@ -1,86 +1,93 @@
 import SwiftUI
 import EffiLensKit
 
-/// Privacy consent gate (server-tracked via /consent/status → /consent/accept).
-/// Content comes from the tenant's published policy, never hardcoded.
+/// Onboarding step 2 (prototype `obStep===2`): "Your privacy, clearly." —
+/// Records / Never records cards, the tenant's published policy, consent
+/// checkbox, Back / I Agree. Server-tracked via /consent/status → /consent/accept.
 struct ConsentView: View {
     @Environment(AppModel.self) private var model
     let consent: ConsentStatusResponse
+    var onBack: (() -> Void)?
 
     @State private var agreed = false
     @State private var isSubmitting = false
     @State private var error: AppError?
 
     var body: some View {
-        VStack(alignment: .leading, spacing: Space.l) {
-            HStack(spacing: Space.m) {
-                BrandMark(size: 36)
-                VStack(alignment: .leading, spacing: Space.xxs) {
-                    Text("Monitoring policy").font(Typo.title)
-                    if let version = consent.policyVersion {
-                        Text("Version \(version)").font(Typo.caption).foregroundStyle(Palette.textSecondary)
-                    }
+        VStack(alignment: .leading, spacing: 0) {
+            OnboardingHeading(prefix: "Your privacy, ", emphasis: "clearly", subtitle: "Here’s exactly what EffiLens records on this Mac.")
+
+            HStack(alignment: .top, spacing: 12) {
+                Card("Records", symbol: "checkmark") {
+                    bulletList(["Work session start / stop", "Active app & window title", "Keyboard/mouse activity level (counts)", "Blurred screenshots of the active window, if your organisation enables them"], mark: "✓")
+                }
+                Card("Never records", symbol: "xmark") {
+                    bulletList(["What you type or passwords", "Full web addresses or page content", "Microphone or camera", "Anything when tracking is off"], mark: "✕")
                 }
             }
+            .padding(.top, 14)
 
-            privacySummary
-
-            ScrollView {
-                Text(consent.policyContent ?? "Your organisation has not published a monitoring policy yet. Tracking stays disabled until one is available.")
-                    .font(Typo.body)
-                    .foregroundStyle(Palette.textPrimary)
-                    .textSelection(.enabled)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .padding(Space.l)
+            if let content = consent.policyContent, !content.isEmpty {
+                ScrollView {
+                    Text(content).font(Typo.caption).foregroundStyle(Palette.textSecondary).textSelection(.enabled)
+                        .frame(maxWidth: .infinity, alignment: .leading).padding(10)
+                }
+                .frame(maxHeight: 70)
+                .background(Palette.inset, in: RoundedRectangle(cornerRadius: Radius.row, style: .continuous))
+                .overlay(RoundedRectangle(cornerRadius: Radius.row, style: .continuous).strokeBorder(Palette.hairline))
+                .padding(.top, 10)
             }
-            .background(Palette.inset, in: RoundedRectangle(cornerRadius: Radius.card, style: .continuous))
 
-            Toggle("I have read and accept this policy", isOn: $agreed)
-                .toggleStyle(.checkbox)
-                .disabled(consent.policyVersion == nil)
+            Toggle(isOn: $agreed) {
+                Text(consent.policyVersion == nil
+                     ? "Your organisation has not published a monitoring policy yet. Tracking stays disabled until one is available."
+                     : "I understand and consent to EffiLens recording work activity as described (policy v\(consent.policyVersion ?? 0)).")
+                    .font(Typo.body).foregroundStyle(Palette.textSecondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            .toggleStyle(.checkbox)
+            .tint(Palette.accent)
+            .disabled(consent.policyVersion == nil)
+            .padding(.top, 16)
 
             if let error {
-                Text(error.userMessage).font(Typo.caption).foregroundStyle(Palette.danger)
+                Text(error.userMessage).font(.system(size: 12)).foregroundStyle(Palette.danger).padding(.top, 6)
             }
 
-            HStack {
-                Button("Sign Out") { Task { await model.signOut() } }
-                Spacer()
+            Spacer(minLength: 0)
+            OnboardingFooter(step: .privacy) {
+                if let onBack {
+                    Button("Back", action: onBack).buttonStyle(.effi)
+                } else {
+                    Button("Sign Out") { Task { await model.signOut() } }.buttonStyle(.effi)
+                }
                 Button {
                     Task { await accept() }
                 } label: {
-                    if isSubmitting { ProgressView().controlSize(.small) } else { Text("Accept & Continue") }
+                    HStack(spacing: 6) {
+                        if isSubmitting { ProgressView().controlSize(.small) }
+                        Text("I Agree")
+                    }
                 }
-                .buttonStyle(.borderedProminent)
+                .buttonStyle(.effiPrimary)
                 .keyboardShortcut(.defaultAction)
                 .disabled(!agreed || isSubmitting || consent.policyVersion == nil)
             }
         }
-        .padding(Space.xxl)
-        .frame(maxWidth: 720, maxHeight: 640)
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 
-    /// Plain-language summary of what is and isn't captured (CLAUDE.md privacy rules).
-    private var privacySummary: some View {
-        HStack(alignment: .top, spacing: Space.xl) {
-            VStack(alignment: .leading, spacing: Space.s) {
-                Text("Recorded while tracking").font(Typo.overline).foregroundStyle(Palette.textTertiary)
-                Label("Active app and window title", systemImage: "macwindow")
-                Label("Website domain only (e.g. github.com)", systemImage: "globe")
-                Label("Activity level as counts", systemImage: "waveform.path.ecg")
-                Label("Blurred screenshots of the active window", systemImage: "camera.metering.center.weighted")
-            }
-            VStack(alignment: .leading, spacing: Space.s) {
-                Text("Never recorded").font(Typo.overline).foregroundStyle(Palette.textTertiary)
-                Label("What you type", systemImage: "keyboard")
-                Label("Full URLs or page content", systemImage: "link")
-                Label("Microphone or camera", systemImage: "mic.slash")
-                Label("Anything while tracking is off", systemImage: "pause.circle")
+    private func bulletList(_ items: [String], mark: String) -> some View {
+        VStack(alignment: .leading, spacing: 0) {
+            ForEach(items, id: \.self) { item in
+                HStack(alignment: .firstTextBaseline, spacing: 7) {
+                    Text(mark)
+                    Text(item).fixedSize(horizontal: false, vertical: true)
+                }
+                .font(Typo.body)
+                .foregroundStyle(Palette.textSecondary)
+                .padding(.vertical, 4)
             }
         }
-        .font(Typo.body)
-        .foregroundStyle(Palette.textSecondary)
     }
 
     private func accept() async {

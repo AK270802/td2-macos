@@ -50,6 +50,12 @@ public actor AgentClient {
         try await call(.getPermissions, payload: Optional<String>.none, as: AgentPermissions.self)
     }
 
+    /// Local recent events (`get_recent_events`). Only type, time and
+    /// duration are decoded — event payloads are never read by the UI.
+    public func recentEvents(limit: Int = 20) async throws -> [AgentRecentEvent] {
+        try await call(.getRecentEvents, payload: ["limit": limit], as: [AgentRecentEvent].self)
+    }
+
     public func selectTask(_ task: AgentTaskRef) async throws {
         _ = try await call(.selectTask, payload: task, as: IgnoredValue.self)
     }

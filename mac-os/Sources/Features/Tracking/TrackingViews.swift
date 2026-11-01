@@ -1,5 +1,7 @@
+import AppKit
 import SwiftUI
 import Observation
+import UniformTypeIdentifiers
 import EffiLensKit
 
 // MARK: - Shared: assigned projects/tasks (GET /projects/assigned)
@@ -24,41 +26,57 @@ final class AssignedWorkModel {
     }
 }
 
-/// "Track" button used by Tracker / Projects / Tasks. Selecting a task goes
-/// through the agent (`select_task`), which starts the timer — the only
-/// timer logic lives in the Rust agent (`common::timer_state`).
+/// A task with its project (flattened for lists).
+struct TaskChoice: Identifiable, Hashable {
+    let project: AssignedProject
+    let task: AssignedTask
+    var id: UUID { task.id }
+
+    static func all(_ projects: [AssignedProject]) -> [TaskChoice] {
+        projects.flatMap { p in p.tasks.map { TaskChoice(project: p, task: $0) } }
+    }
+}
+
+extension AppModel {
+    func isCurrent(_ task: AssignedTask) -> Bool {
+        timerState?.task?.taskId == task.id.uuidString.lowercased()
+    }
+
+    /// Selecting a task goes through the agent (`select_task`), which starts
+    /// the timer — the only timer logic lives in `common::timer_state`.
+    func track(_ choice: TaskChoice) {
+        let ref = AssignedWorkModel.ref(choice.task, in: choice.project)
+        Task { await runAgent { try await $0.selectTask(ref) } }
+    }
+}
+
+/// "Track" button used by Projects / Tasks rows.
 struct TrackTaskButton: View {
     @Environment(AppModel.self) private var model
     let task: AssignedTask
     let project: AssignedProject
 
-    private var isCurrent: Bool {
-        model.timerState?.task?.taskId == task.id.uuidString.lowercased() && model.timerState?.state == .running
-    }
-
     var body: some View {
-        if isCurrent {
-            StatusPill(text: "Tracking", tone: .success)
+        if model.isCurrent(task), model.timerState?.state == .running {
+            Pill(text: "● Tracking", kind: .ok)
         } else {
             Button {
-                let ref = AssignedWorkModel.ref(task, in: project)
-                Task { await model.runAgent { try await $0.selectTask(ref) } }
+                model.track(TaskChoice(project: project, task: task))
             } label: {
                 Label("Track", systemImage: "play.fill")
             }
-            .controlSize(.small)
+            .buttonStyle(.effi)
             .disabled(!model.isAgentConnected)
             .help(model.isAgentConnected ? "Start tracking this task" : "The tracking agent is not running")
         }
     }
 }
 
-// MARK: - Tracker
+// MARK: - Tracker (prototype V.tracker: 1.3 : 1)
 
 struct TrackerView: View {
     @Environment(AppModel.self) private var model
     @State private var work: AssignedWorkModel
-    @State private var stats: AgentLocalTimeStats?
     @State private var search = ""
     @State private var showBreakSheet = false
 
@@ -67,140 +85,103 @@ struct TrackerView: View {
     }
 
     var body: some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: Space.xl) {
-                AgentStatusNotice()
-                timerHero
-                todayStats
-                Card("Select a task", subtitle: "Choose what you're working on. The timer starts when you pick a task.") {
-                    TextField("Search tasks", text: $search).textFieldStyle(.roundedBorder).frame(maxWidth: 320)
-                    LoadStateView(state: work.projects, emptyTitle: "No assigned tasks",
-                                  emptyMessage: "Ask your manager to assign you to a project.", emptySymbol: "checklist",
-                                  isEmpty: { $0.allSatisfy { $0.tasks.isEmpty } },
-                                  retry: { Task { await work.load() } }) { projects in
-                        TaskPickerList(projects: projects, search: search)
-                    }
-                }
+        Page {
+            AgentStatusNotice()
+            FractionalColumns(ratio: 1.3) {
+                timerCard
+                quickSwitch
             }
-            .padding(Space.xl)
-            .frame(maxWidth: 1100, alignment: .leading)
         }
         .task { await work.load() }
-        .task(id: model.isAgentConnected) {
-            while !Task.isCancelled, model.isAgentConnected {
-                stats = try? await model.environment?.agent?.localTimeStats()
-                try? await Task.sleep(for: .seconds(30))
-            }
-        }
         .sheet(isPresented: $showBreakSheet) { BreakSheet() }
     }
 
-    private var timerHero: some View {
+    private var statusText: (String, Color) {
+        switch model.timerState?.state {
+        case .running: return ("● Recording", Palette.success)
+        case .paused: return ("Paused", Palette.textTertiary)
+        case .onBreak: return ("On break", Palette.warning)
+        case .idle: return ("Ready", Palette.textTertiary)
+        case .none: return (model.agentLink == .legacyConflict ? "Blocked by the older app" : "Agent offline", Palette.textTertiary)
+        }
+    }
+
+    private var timerCard: some View {
         let state = model.timerState
-        return Card {
-            HStack(alignment: .center, spacing: Space.xl) {
-                VStack(alignment: .leading, spacing: Space.s) {
-                    Text(phaseText(state)).font(Typo.overline).foregroundStyle(Palette.textSecondary)
-                    Text(Format.clock(state?.elapsedSecs ?? 0))
-                        .font(Typo.timerHero).monospacedDigit()
-                        .foregroundStyle(state?.state == .running ? Palette.textPrimary : Palette.textSecondary)
-                        .contentTransition(.numericText())
-                        .accessibilityLabel("Elapsed \(Format.duration(state?.elapsedSecs ?? 0))")
-                    if let task = state?.task {
-                        Text("\(task.projectName) · \(task.taskName)").font(Typo.body).foregroundStyle(Palette.textSecondary)
-                    } else {
-                        Text("No task selected").font(Typo.body).foregroundStyle(Palette.textTertiary)
-                    }
-                    if state?.inMeeting == true { StatusPill(text: "In a meeting", tone: .info) }
-                    if let remaining = state?.breakRemainingSecs, state?.state == .onBreak {
-                        StatusPill(text: "Break · \(Format.clock(remaining)) left", tone: .warning)
+        let running = state?.state == .running
+        let elapsed = state?.elapsedSecs ?? 0
+        return Card(padding: 34) {
+            VStack(spacing: 0) {
+                Text(state?.task?.projectName ?? "Select a task to start").font(Typo.caption).foregroundStyle(Palette.textTertiary)
+                Text(state?.task?.taskName ?? "No task selected").font(.system(size: 19, weight: .semibold)).padding(.top, 4).multilineTextAlignment(.center)
+                ProgressRing(progress: Double(elapsed % 3600) / 3600, lineWidth: 14) {
+                    VStack(spacing: 2) {
+                        Text(Format.clock(elapsed)).font(Typo.timerHero).tracking(-2).monospacedDigit()
+                            .contentTransition(.numericText())
+                            .accessibilityLabel("Elapsed \(Format.duration(elapsed))")
+                        Text(statusText.0).font(Typo.body).foregroundStyle(statusText.1)
+                        if let remaining = state?.breakRemainingSecs, state?.state == .onBreak {
+                            Text("\(Format.clock(remaining)) left").font(Typo.caption).foregroundStyle(Palette.warning)
+                        }
+                        if state?.inMeeting == true { Pill(text: "In a meeting", kind: .blue) }
                     }
                 }
-                Spacer()
-                VStack(alignment: .trailing, spacing: Space.s) {
-                    HStack {
-                        Button {
-                            Task { await model.runAgent { try await $0.togglePlayPause() } }
-                        } label: {
-                            Label(state?.state == .running ? "Pause" : "Resume",
-                                  systemImage: state?.state == .running ? "pause.fill" : "play.fill")
-                                .frame(minWidth: 90)
-                        }
-                        .buttonStyle(.borderedProminent)
-                        .controlSize(.large)
-                        .disabled(state?.task == nil)
-                        .keyboardShortcut(.space, modifiers: [.control, .option])
-
-                        Button(role: .destructive) {
-                            Task { await model.runAgent { try await $0.stopTracking() } }
-                        } label: { Label("Stop", systemImage: "stop.fill") }
-                        .controlSize(.large)
-                        .disabled(state == nil || state?.state == .idle)
+                .frame(width: 250, height: 250)
+                .padding(.vertical, 24)
+                HStack(spacing: 8) {
+                    Button {
+                        Task { await model.runAgent { try await $0.togglePlayPause() } }
+                    } label: {
+                        Label(running ? "Pause" : (elapsed > 0 ? "Resume" : "Start"), systemImage: running ? "pause.fill" : "play.fill")
                     }
-                    Button("Take a Break…") { showBreakSheet = true }
-                        .disabled(state?.state != .running)
+                    .buttonStyle(.effiButton(running ? .normal : .primary, .large))
+                    .disabled(state?.task == nil)
+                    Button("Stop & Save") { Task { await model.runAgent { try await $0.stopTracking() } } }
+                        .buttonStyle(.effiButton(.normal, .large))
+                        .disabled(state == nil || state?.state == .idle)
+                    Button("Break…") { showBreakSheet = true }
+                        .buttonStyle(.effiButton(.normal, .large))
+                        .disabled(!running)
                 }
                 .disabled(!model.isAgentConnected)
+                Text("⌃⌥Space start/pause · ⌃⌥S stop · ⇧⌘M mini timer").font(Typo.caption).foregroundStyle(Palette.textTertiary).padding(.top, 14)
             }
+            .frame(maxWidth: .infinity)
         }
     }
 
-    private var todayStats: some View {
-        HStack(spacing: Space.l) {
-            StatTile(label: "Today", value: stats.map { Format.duration($0.workedTodaySec) } ?? "—")
-            StatTile(label: "This week", value: stats.map { Format.duration($0.workedWeekSec) } ?? "—")
-            StatTile(label: "Sessions today", value: stats.map { "\($0.sessionsToday)" } ?? "—")
-            StatTile(label: "Meetings today", value: stats.map { Format.duration($0.meetingTodaySec) } ?? "—")
-        }
-        .help("Recorded on this Mac by the tracking agent; the server totals in History include other devices.")
-    }
-
-    private func phaseText(_ state: AgentTimerState?) -> String {
-        switch state?.state {
-        case .running: return "TRACKING"
-        case .paused: return "PAUSED"
-        case .onBreak: return "ON BREAK"
-        case .idle: return "READY"
-        case .none: return "AGENT OFFLINE"
-        }
-    }
-}
-
-struct TaskPickerList: View {
-    let projects: [AssignedProject]
-    let search: String
-
-    var body: some View {
-        let query = search.trimmingCharacters(in: .whitespaces).lowercased()
-        VStack(alignment: .leading, spacing: Space.m) {
-            ForEach(projects) { project in
-                let tasks = project.tasks.filter { query.isEmpty || $0.name.lowercased().contains(query) || project.name.lowercased().contains(query) }
-                if !tasks.isEmpty {
-                    VStack(alignment: .leading, spacing: Space.xs) {
-                        Text(project.name).font(Typo.overline).foregroundStyle(Palette.textSecondary)
-                        ForEach(tasks) { task in
-                            HStack {
-                                VStack(alignment: .leading, spacing: 0) {
-                                    Text(task.name).font(Typo.bodyEmphasis)
-                                    if let d = task.description, !d.isEmpty {
-                                        Text(d).font(Typo.caption).foregroundStyle(Palette.textSecondary).lineLimit(1)
-                                    }
+    private var quickSwitch: some View {
+        Card("Quick switch task") {
+            EffiTextField(placeholder: "Search tasks…", text: $search).padding(.bottom, 2)
+            LoadStateView(state: work.projects, emptyTitle: "No assigned tasks", emptyMessage: "Ask your manager to assign you to a project.",
+                          emptySymbol: "checklist", isEmpty: { $0.allSatisfy { $0.tasks.isEmpty } },
+                          retry: { Task { await work.load() } }) { projects in
+                let query = search.trimmingCharacters(in: .whitespaces).lowercased()
+                let choices = TaskChoice.all(projects).filter { query.isEmpty || $0.task.name.lowercased().contains(query) || $0.project.name.lowercased().contains(query) }
+                VStack(spacing: 8) {
+                    ForEach(choices) { choice in
+                        Button {
+                            model.track(choice)
+                        } label: {
+                            TaskRowCard(title: choice.task.name, subtitle: choice.project.name,
+                                        dot: IdentityColor.color(for: choice.project.id), selected: model.isCurrent(choice.task)) {
+                                if model.isCurrent(choice.task) {
+                                    Image(systemName: "checkmark").font(.system(size: 13, weight: .bold)).foregroundStyle(Palette.accent)
                                 }
-                                Spacer()
-                                TrackTaskButton(task: task, project: project)
                             }
-                            .padding(.vertical, Space.xs)
-                            Divider()
                         }
+                        .buttonStyle(.plain)
+                        .disabled(!model.isAgentConnected)
                     }
+                    if choices.isEmpty { EmptyStateView(title: "No matching tasks", symbol: "magnifyingglass") }
                 }
             }
         }
     }
 }
 
-/// Break picker → agent `start_break`. Paid/unpaid accounting is decided by
-/// the organisation's `breaks_are_paid` setting on the server.
+/// Break picker → agent `start_break`. Paid/unpaid accounting follows the
+/// organisation's `breaks_are_paid` setting on the server.
 struct BreakSheet: View {
     @Environment(AppModel.self) private var model
     @Environment(\.dismiss) private var dismiss
@@ -208,17 +189,15 @@ struct BreakSheet: View {
     @State private var kind = "short"
 
     var body: some View {
-        VStack(alignment: .leading, spacing: Space.l) {
+        VStack(alignment: .leading, spacing: 0) {
             Text("Take a break").font(Typo.title)
-            Picker("Type", selection: $kind) {
-                Text("Short break").tag("short")
-                Text("Lunch").tag("lunch")
-                Text("Personal").tag("personal")
-            }
-            Stepper("Duration: \(minutes) min", value: $minutes, in: 5...120, step: 5)
+            FieldLabel("Type")
+            EffiSegmented(selection: $kind, options: [("short", "Short break"), ("lunch", "Lunch"), ("personal", "Personal")])
+            FieldLabel("Duration")
+            EffiSegmented(selection: $minutes, options: [(5, "5 min"), (15, "15 min"), (30, "30 min"), (60, "60 min")])
             HStack {
                 Spacer()
-                Button("Cancel", role: .cancel) { dismiss() }
+                Button("Cancel") { dismiss() }.buttonStyle(.effi).keyboardShortcut(.cancelAction)
                 Button("Start Break") {
                     let payload = AgentBreakPayload(breakType: kind, durationSecs: minutes * 60)
                     Task {
@@ -226,12 +205,14 @@ struct BreakSheet: View {
                         dismiss()
                     }
                 }
-                .buttonStyle(.borderedProminent)
+                .buttonStyle(.effiPrimary)
                 .keyboardShortcut(.defaultAction)
             }
+            .padding(.top, 20)
         }
-        .padding(Space.xl)
-        .frame(width: 380)
+        .padding(22)
+        .frame(width: 400)
+        .background(Palette.surfaceRaised)
     }
 }
 
@@ -242,44 +223,46 @@ struct AgentStatusNotice: View {
     var body: some View {
         switch model.agentLink {
         case .unavailable, .unknown:
-            notice(symbol: "bolt.horizontal.circle", tone: Palette.warning,
+            notice(symbol: "bolt.horizontal.circle",
                    text: model.agentRegistration == .notBundled
                        ? "This build does not include the tracking agent. Time tracking is unavailable."
                        : model.agentRegistration == .requiresApproval
                            ? "Allow EffiLens in System Settings › General › Login Items so the tracking agent can run."
                            : "The tracking agent is not responding. Tracking is paused until it reconnects.") {
                 if model.agentRegistration == .requiresApproval {
-                    Button("Open Login Items") { AgentLifecycle.openLoginItemsSettings() }
+                    Button("Open Login Items") { AgentLifecycle.openLoginItemsSettings() }.buttonStyle(.effi)
                 } else if model.agentRegistration != .notBundled {
-                    Button("Reconnect") { model.restartAgentConnection() }
+                    Button("Reconnect") { model.restartAgentConnection() }.buttonStyle(.effi)
                 }
             }
         case .legacyConflict:
-            notice(symbol: "exclamationmark.triangle", tone: Palette.warning,
+            notice(symbol: "exclamationmark.triangle",
                    text: "The older WorkPulse app is running. Quit it to track time here — running both would record time twice.") { EmptyView() }
         case .connected:
             EmptyView()
         }
     }
 
-    private func notice<A: View>(symbol: String, tone: Color, text: String, @ViewBuilder action: () -> A) -> some View {
+    private func notice<A: View>(symbol: String, text: String, @ViewBuilder action: () -> A) -> some View {
         HStack(spacing: Space.m) {
-            Image(systemName: symbol).foregroundStyle(tone)
-            Text(text).font(Typo.body).fixedSize(horizontal: false, vertical: true)
+            Image(systemName: symbol).foregroundStyle(Palette.warning)
+            Text(text).font(Typo.body).foregroundStyle(Palette.textPrimary).fixedSize(horizontal: false, vertical: true)
             Spacer()
             action()
         }
-        .padding(Space.m)
-        .background(tone.opacity(0.10), in: RoundedRectangle(cornerRadius: Radius.card, style: .continuous))
+        .padding(.horizontal, 14)
+        .padding(.vertical, 10)
+        .background(Palette.warning.opacity(0.10), in: RoundedRectangle(cornerRadius: Radius.group, style: .continuous))
+        .overlay(RoundedRectangle(cornerRadius: Radius.group, style: .continuous).strokeBorder(Palette.warning.opacity(0.25)))
     }
 }
 
-// MARK: - Projects
+// MARK: - Projects (prototype V.projects: 2-column cards)
 
 struct ProjectsView: View {
+    @Environment(Navigator.self) private var navigator
     @State private var work: AssignedWorkModel
-    @State private var summary: Loadable<ProjectTimeSummaryResponse> = .idle
-    @State private var expanded: Set<UUID> = []
+    @State private var summary: ProjectTimeSummaryResponse?
     private let service: WorkService
 
     init(environment: AppEnvironment) {
@@ -288,56 +271,70 @@ struct ProjectsView: View {
     }
 
     var body: some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: Space.l) {
-                AgentStatusNotice()
-                LoadStateView(state: work.projects, emptyTitle: "No projects", emptyMessage: "You are not assigned to any project yet.",
-                              emptySymbol: "folder", isEmpty: { $0.isEmpty }, retry: { Task { await work.load() } }) { projects in
-                    LazyVGrid(columns: [GridItem(.adaptive(minimum: 300), spacing: Space.l)], alignment: .leading, spacing: Space.l) {
-                        ForEach(projects) { project in projectCard(project) }
-                    }
+        Page {
+            AgentStatusNotice()
+            LoadStateView(state: work.projects, emptyTitle: "No projects", emptyMessage: "You are not assigned to any project yet.",
+                          emptySymbol: "folder", isEmpty: { $0.isEmpty }, retry: { Task { await work.load() } }) { projects in
+                EqualColumns(count: 2) {
+                    ForEach(projects) { project in projectCard(project) }
                 }
             }
-            .padding(Space.xl)
         }
         .task {
             await work.load()
-            do { summary = .loaded(try await service.projectSummary(range: .thisWeek())) } catch { summary = .failed(DashboardViewModel.map(error)) }
+            summary = try? await service.projectSummary(range: .thisWeek())
         }
     }
 
     private func weekSeconds(_ project: AssignedProject) -> Int? {
-        summary.value?.items.first { $0.projectId == project.id }?.totalDurationSec ?? (summary.value == nil ? nil : 0)
+        guard let summary else { return nil }
+        return summary.items.first { $0.projectId == project.id }?.totalDurationSec ?? 0
     }
 
     private func projectCard(_ project: AssignedProject) -> some View {
-        Card(project.name, subtitle: project.description) {
-            HStack {
-                StatusPill(text: "\(project.tasks.count) task\(project.tasks.count == 1 ? "" : "s")", tone: .neutral)
-                Spacer()
-                Text(weekSeconds(project).map { "\(Format.duration($0)) this week" } ?? "—")
-                    .font(Typo.caption).foregroundStyle(Palette.textSecondary)
-            }
-            DisclosureGroup(isExpanded: Binding(get: { expanded.contains(project.id) },
-                                                set: { if $0 { expanded.insert(project.id) } else { expanded.remove(project.id) } })) {
-                ForEach(project.tasks) { task in
-                    HStack {
-                        Text(task.name).font(Typo.body)
-                        Spacer()
-                        TrackTaskButton(task: task, project: project)
-                    }
-                    .padding(.vertical, Space.xxs)
+        let tint = IdentityColor.color(for: project.id)
+        let week = weekSeconds(project)
+        let share = (week ?? 0) > 0 && (summary?.totalDurationSec ?? 0) > 0 ? Double(week ?? 0) / Double(summary?.totalDurationSec ?? 1) : 0
+        return Card {
+            HStack(spacing: Space.m) {
+                IconTile(symbol: "folder", tint: tint)
+                VStack(alignment: .leading, spacing: 1) {
+                    Text(project.name).font(.system(size: 14, weight: .bold)).lineLimit(1)
+                    Text(project.description?.isEmpty == false ? project.description! : "No description")
+                        .font(Typo.caption).foregroundStyle(Palette.textTertiary).lineLimit(1)
                 }
-            } label: { Text("Tasks").font(Typo.bodyEmphasis) }
+                Spacer()
+                Pill(text: "\(project.tasks.count) task\(project.tasks.count == 1 ? "" : "s")", kind: .gray)
+            }
+            HStack {
+                Text("Share of your week").font(Typo.body).foregroundStyle(Palette.textTertiary)
+                Spacer()
+                Text("\(Int((share * 100).rounded()))%").font(Typo.mono)
+            }
+            .padding(.top, 6)
+            ProgressBar(value: share, tint: tint)
+            HStack {
+                (Text(week.map(Format.duration) ?? "—").font(Typo.mono) + Text(" this week").font(Typo.body).foregroundColor(Palette.textTertiary))
+                Spacer()
+                Button("View Tasks") {
+                    navigator.taskProjectFilter = project.id
+                    navigator.go(.tasks)
+                }
+                .buttonStyle(.effi)
+            }
+            .padding(.top, 4)
         }
     }
 }
 
-// MARK: - Assigned tasks
+// MARK: - Assigned tasks (prototype V.tasks)
 
 struct TasksView: View {
+    @Environment(AppModel.self) private var model
+    @Environment(Navigator.self) private var navigator
     @State private var work: AssignedWorkModel
     @State private var search = ""
+    @State private var projectFilter: UUID?
     @State private var summary: TaskTimeSummaryResponse?
     private let service: WorkService
 
@@ -346,39 +343,47 @@ struct TasksView: View {
         service = environment.work
     }
 
-    private struct Row: Identifiable {
-        let task: AssignedTask
-        let project: AssignedProject
-        var id: UUID { task.id }
-    }
-
     var body: some View {
-        VStack(alignment: .leading, spacing: Space.m) {
-            AgentStatusNotice().padding([.horizontal, .top], Space.xl)
+        Page {
+            AgentStatusNotice()
+            HStack(spacing: 10) {
+                EffiTextField(placeholder: "Search tasks…", text: $search).frame(maxWidth: 320)
+                FieldChrome {
+                    Picker("Project", selection: $projectFilter) {
+                        Text("All projects").tag(UUID?.none)
+                        ForEach(work.projects.value ?? []) { Text($0.name).tag(Optional($0.id)) }
+                    }
+                    .pickerStyle(.menu)
+                    .buttonStyle(.plain)
+                }
+                .frame(maxWidth: 220)
+                Spacer()
+            }
             LoadStateView(state: work.projects, emptyTitle: "No assigned tasks", emptySymbol: "checklist",
                           isEmpty: { $0.allSatisfy { $0.tasks.isEmpty } }, retry: { Task { await work.load() } }) { projects in
                 let query = search.lowercased()
-                let rows = projects.flatMap { p in p.tasks.map { Row(task: $0, project: p) } }
+                let rows = TaskChoice.all(projects)
+                    .filter { projectFilter == nil || $0.project.id == projectFilter }
                     .filter { query.isEmpty || $0.task.name.lowercased().contains(query) || $0.project.name.lowercased().contains(query) }
-                Table(rows) {
-                    TableColumn("Task") { row in
-                        VStack(alignment: .leading, spacing: 0) {
-                            Text(row.task.name).font(Typo.bodyEmphasis)
-                            if let d = row.task.description, !d.isEmpty { Text(d).font(Typo.caption).foregroundStyle(Palette.textSecondary).lineLimit(1) }
+                VStack(spacing: 8) {
+                    ForEach(rows) { row in
+                        TaskRowCard(title: row.task.name,
+                                    subtitle: [row.project.name, row.task.description].compactMap { $0 }.filter { !$0.isEmpty }.joined(separator: " · "),
+                                    dot: IdentityColor.color(for: row.project.id), selected: model.isCurrent(row.task)) {
+                            if let sec = summary?.items.first(where: { $0.taskId == row.task.id })?.totalDurationSec {
+                                Text("\(Format.duration(sec)) this week").font(Typo.caption).foregroundStyle(Palette.textTertiary).monospacedDigit()
+                            }
+                            TrackTaskButton(task: row.task, project: row.project)
                         }
                     }
-                    TableColumn("Project") { row in Text(row.project.name) }
-                    TableColumn("This week") { row in
-                        let sec = summary?.items.first { $0.taskId == row.task.id }?.totalDurationSec
-                        Text(sec.map(Format.duration) ?? "—").monospacedDigit()
-                    }
-                    .width(90)
-                    TableColumn("") { row in TrackTaskButton(task: row.task, project: row.project) }
-                        .width(100)
+                    if rows.isEmpty { EmptyStateView(title: "No matching tasks", symbol: "magnifyingglass") }
                 }
             }
         }
-        .searchable(text: $search, placement: .toolbar, prompt: "Search tasks")
+        .onAppear {
+            projectFilter = navigator.taskProjectFilter
+            navigator.taskProjectFilter = nil
+        }
         .task {
             await work.load()
             summary = try? await service.taskSummary(range: .thisWeek())
@@ -386,17 +391,17 @@ struct TasksView: View {
     }
 }
 
-// MARK: - History (GET /task-time)
+// MARK: - History (prototype V.history; GET /task-time)
 
 @MainActor
 @Observable
 final class HistoryViewModel {
     enum Period: String, CaseIterable, Identifiable {
-        case today = "Today", week = "This Week", month = "This Month"
+        case day = "Day", week = "Week", month = "Month"
         var id: String { rawValue }
         var range: DateRange {
             switch self {
-            case .today: return .today()
+            case .day: return .today()
             case .week: return .thisWeek()
             case .month:
                 let cal = Calendar.current
@@ -407,7 +412,7 @@ final class HistoryViewModel {
         }
     }
 
-    var period: Period = .week
+    var period: Period = .day
     private(set) var logs: Loadable<TaskTimeLogListResponse> = .idle
     private let work: WorkService
 
@@ -422,62 +427,92 @@ final class HistoryViewModel {
 
 struct HistoryView: View {
     @State private var viewModel: HistoryViewModel
+    @State private var exportError: String?
 
     init(environment: AppEnvironment) { _viewModel = State(initialValue: HistoryViewModel(environment: environment)) }
 
-    var body: some View {
-        VStack(alignment: .leading, spacing: Space.m) {
-            HStack {
-                Picker("Period", selection: $viewModel.period) {
-                    ForEach(HistoryViewModel.Period.allCases) { Text($0.rawValue).tag($0) }
-                }
-                .pickerStyle(.segmented)
-                .frame(maxWidth: 360)
-                Spacer()
-                if let total = viewModel.logs.value.map({ $0.items.reduce(0) { $0 + $1.durationSec } }) {
-                    Text("Total \(Format.duration(total))").font(Typo.bodyEmphasis).monospacedDigit()
-                }
-            }
-            .padding([.horizontal, .top], Space.xl)
+    private var sessions: [TaskTimeLog] {
+        (viewModel.logs.value?.items ?? []).filter { $0.isBreak != true }.sorted { $0.startedAt > $1.startedAt }
+    }
 
-            LoadStateView(state: viewModel.logs, emptyTitle: "No time recorded", emptyMessage: "Sessions you track appear here after they sync.",
-                          emptySymbol: "clock", isEmpty: { $0.items.isEmpty }, retry: { Task { await viewModel.load() } }) { page in
-                Table(page.items.sorted { $0.startedAt > $1.startedAt }) {
-                    TableColumn("Date") { log in Text(log.startedAt.formatted(.dateTime.weekday(.abbreviated).day().month(.abbreviated))) }
-                        .width(110)
-                    TableColumn("Time") { log in Text("\(Format.time(log.startedAt)) – \(Format.time(log.endedAt))").monospacedDigit() }
-                        .width(140)
-                    TableColumn("Task") { log in
-                        VStack(alignment: .leading, spacing: 0) {
-                            Text(log.isBreak == true ? "Break" : log.taskName).font(Typo.bodyEmphasis)
-                            Text(log.projectName).font(Typo.caption).foregroundStyle(Palette.textSecondary)
+    var body: some View {
+        Page {
+            HStack {
+                EffiSegmented(selection: $viewModel.period, options: HistoryViewModel.Period.allCases.map { ($0, $0.rawValue) })
+                Spacer()
+                if let exportError { Text(exportError).font(Typo.caption).foregroundStyle(Palette.danger) }
+                Button("Export CSV") { exportCSV() }.buttonStyle(.effi).disabled(sessions.isEmpty)
+            }
+            LoadStateView(state: viewModel.logs, retry: { Task { await viewModel.load() } }) { _ in
+                let total = sessions.reduce(0) { $0 + $1.durationSec }
+                EqualColumns(count: 3) {
+                    StatTile(label: "Total", value: Format.duration(total))
+                    StatTile(label: "Sessions", value: "\(sessions.count)")
+                    StatTile(label: "Avg. session", value: sessions.isEmpty ? "—" : Format.duration(total / sessions.count))
+                }
+                if sessions.isEmpty {
+                    Card { EmptyStateView(title: "No time recorded", message: "Sessions you track appear here after they sync.", symbol: "clock") }
+                } else {
+                    ForEach(groups, id: \.day) { group in
+                        Card(group.title, trailing: AnyView(Text("\(group.logs.count) session\(group.logs.count == 1 ? "" : "s")").font(Typo.mono))) {
+                            EffiTable<TaskTimeLog>(rows: group.logs, columns: [
+                                .init("Task") { log in Text(log.taskName) },
+                                .init("Project") { log in Text(log.projectName).foregroundStyle(Palette.textSecondary) },
+                                .init("Start", width: 90) { log in Text(Format.time(log.startedAt)).font(Typo.mono) },
+                                .init("End", width: 90) { log in Text(Format.time(log.endedAt)).font(Typo.mono) },
+                                .init("Duration", width: 100) { log in
+                                    HStack(spacing: 6) {
+                                        Text(Format.duration(log.durationSec)).font(.system(size: 13, weight: .bold, design: .monospaced))
+                                        if log.isManual { Pill(text: "Manual", kind: .blue) }
+                                    }
+                                },
+                            ])
                         }
                     }
-                    TableColumn("Duration") { log in Text(Format.duration(log.durationSec)).monospacedDigit() }
-                        .width(80)
-                    TableColumn("Type") { log in
-                        if log.isManual { StatusPill(text: "Manual", tone: .info) }
-                        else if log.isBreak == true { StatusPill(text: "Break", tone: .warning) }
-                        else { StatusPill(text: "Tracked", tone: .neutral) }
-                    }
-                    .width(80)
-                }
-                if page.total > page.items.count {
-                    Text("Showing \(page.items.count) of \(page.total) entries.").font(Typo.caption).foregroundStyle(Palette.textSecondary)
-                        .padding(.horizontal, Space.xl)
                 }
             }
         }
         .task(id: viewModel.period) { await viewModel.load() }
     }
+
+    private struct DayGroup {
+        let day: CalendarDate
+        let title: String
+        let logs: [TaskTimeLog]
+    }
+
+    private var groups: [DayGroup] {
+        let grouped = Dictionary(grouping: sessions) { CalendarDate($0.startedAt) }
+        return grouped.keys.sorted(by: >).map { day in
+            let title = day.date().map { Calendar.current.isDateInToday($0) ? "Today" : $0.formatted(.dateTime.weekday(.wide).day().month(.abbreviated)) } ?? day.description
+            return DayGroup(day: day, title: title, logs: grouped[day] ?? [])
+        }
+    }
+
+    /// Writes the fetched logs to a CSV file the user chooses.
+    private func exportCSV() {
+        let panel = NSSavePanel()
+        panel.allowedContentTypes = [.commaSeparatedText]
+        panel.nameFieldStringValue = "EffiLens-time-\(viewModel.period.rawValue.lowercased()).csv"
+        guard panel.runModal() == .OK, let url = panel.url else { return }
+        func esc(_ s: String) -> String { "\"\(s.replacingOccurrences(of: "\"", with: "\"\""))\"" }
+        let iso = ISO8601DateFormatter()
+        var csv = "task,project,started_at,ended_at,duration_sec,manual\n"
+        for log in sessions {
+            csv += [esc(log.taskName), esc(log.projectName), iso.string(from: log.startedAt), iso.string(from: log.endedAt), "\(log.durationSec)", log.isManual ? "true" : "false"].joined(separator: ",") + "\n"
+        }
+        do { try csv.write(to: url, atomically: true, encoding: .utf8); exportError = nil } catch { exportError = "Couldn't save the file." }
+    }
 }
 
-// MARK: - Manual entry (POST /task-time/manual — admin+)
+// MARK: - Manual entry (prototype V.manual; POST /task-time/manual — admin+)
 
 struct ManualEntryView: View {
     @Environment(AppModel.self) private var model
+    @Environment(Navigator.self) private var navigator
     @State private var work: AssignedWorkModel
     @State private var selectedTask: UUID?
+    @State private var day = Date()
     @State private var start = Calendar.current.date(byAdding: .hour, value: -1, to: Date()) ?? Date()
     @State private var end = Date()
     @State private var submitting = false
@@ -489,61 +524,90 @@ struct ManualEntryView: View {
         service = environment.work
     }
 
-    private struct Choice: Identifiable {
-        let project: AssignedProject
-        let task: AssignedTask
-        var id: UUID { task.id }
+    private var choices: [TaskChoice] { TaskChoice.all(work.projects.value ?? []) }
+
+    private func combine(_ day: Date, _ time: Date) -> Date {
+        let cal = Calendar.current
+        let d = cal.dateComponents([.year, .month, .day], from: day)
+        let t = cal.dateComponents([.hour, .minute], from: time)
+        return cal.date(from: DateComponents(year: d.year, month: d.month, day: d.day, hour: t.hour, minute: t.minute)) ?? time
     }
 
-    private var choices: [Choice] {
-        (work.projects.value ?? []).flatMap { p in p.tasks.map { Choice(project: p, task: $0) } }
-    }
+    private var startedAt: Date { combine(day, start) }
+    private var endedAt: Date { combine(day, end) }
 
     private var validationMessage: String? {
         if selectedTask == nil { return "Choose a task." }
-        if end <= start { return "End time must be after start time." }
-        if end > Date() { return "Entries can't be in the future." }
+        if endedAt <= startedAt { return "End time must be after start time." }
+        if endedAt > Date() { return "Entries can't be in the future." }
         return nil
     }
 
     var body: some View {
-        Form {
-            Section {
-                Text("Add time you worked without the tracker. The server validates overlaps and records who created the entry.")
-                    .font(Typo.caption).foregroundStyle(Palette.textSecondary)
-            }
-            Section("Entry") {
-                Picker("Task", selection: $selectedTask) {
-                    Text("Choose…").tag(UUID?.none)
-                    ForEach(choices) { choice in
-                        Text("\(choice.project.name) · \(choice.task.name)").tag(Optional(choice.task.id))
+        Page {
+            FractionalColumns(ratio: 1.2) {
+                Card("New time entry") {
+                    VStack(alignment: .leading, spacing: 0) {
+                        FieldLabel("Task").padding(.top, -12)
+                        FieldChrome {
+                            Picker("Task", selection: $selectedTask) {
+                                Text("Choose…").tag(UUID?.none)
+                                ForEach(choices) { Text("\($0.task.name) — \($0.project.name)").tag(Optional($0.task.id)) }
+                            }
+                            .pickerStyle(.menu)
+                            .buttonStyle(.plain)
+                        }
+                        EqualColumns(count: 3, spacing: 10) {
+                            VStack(alignment: .leading, spacing: 0) {
+                                FieldLabel("Date")
+                                FieldChrome { DatePicker("Date", selection: $day, in: ...Date(), displayedComponents: .date).datePickerStyle(.field) }
+                            }
+                            VStack(alignment: .leading, spacing: 0) {
+                                FieldLabel("Start")
+                                FieldChrome { DatePicker("Start", selection: $start, displayedComponents: .hourAndMinute).datePickerStyle(.field) }
+                            }
+                            VStack(alignment: .leading, spacing: 0) {
+                                FieldLabel("End")
+                                FieldChrome { DatePicker("End", selection: $end, displayedComponents: .hourAndMinute).datePickerStyle(.field) }
+                            }
+                        }
+                        HStack {
+                            Text("Duration").font(Typo.label).foregroundStyle(Palette.textSecondary)
+                            Spacer()
+                            Text(Format.duration(Int(max(0, endedAt.timeIntervalSince(startedAt))))).font(Typo.mono)
+                        }
+                        .padding(.top, 12)
+                        Group {
+                            if case .failure(let error) = result { Text(error.userMessage).foregroundStyle(Palette.danger) }
+                            else if case .success(let log) = result { Text("Saved \(Format.duration(log.durationSec)) on \(log.taskName ?? "task").").foregroundStyle(Palette.success) }
+                            else if let validationMessage { Text(validationMessage).foregroundStyle(Palette.textTertiary) }
+                        }
+                        .font(.system(size: 12))
+                        .padding(.top, 10)
+                        HStack {
+                            Spacer()
+                            Button("Cancel") { navigator.go(.history) }.buttonStyle(.effi)
+                            Button {
+                                Task { await submit() }
+                            } label: {
+                                HStack(spacing: 6) {
+                                    if submitting { ProgressView().controlSize(.small) }
+                                    Text("Save Entry")
+                                }
+                            }
+                            .buttonStyle(.effiPrimary)
+                            .disabled(validationMessage != nil || submitting)
+                        }
+                        .padding(.top, 14)
                     }
                 }
-                DatePicker("Start", selection: $start, in: ...Date())
-                DatePicker("End", selection: $end, in: ...Date())
-                LabeledContent("Duration", value: Format.duration(Int(max(0, end.timeIntervalSince(start)))))
-                LabeledContent("For", value: model.user?.displayName ?? "—")
-            }
-            Section {
-                if let message = validationMessage { Text(message).font(Typo.caption).foregroundStyle(Palette.textSecondary) }
-                if case .failure(let error) = result { Label(error.userMessage, systemImage: "exclamationmark.circle").foregroundStyle(Palette.danger) }
-                if case .success(let log) = result {
-                    Label("Saved \(Format.duration(log.durationSec)) on \(log.taskName ?? "task").", systemImage: "checkmark.circle").foregroundStyle(Palette.success)
+                Card("Policy", symbol: "info.circle") {
+                    Text("Manual entries can be added by administrators only and are recorded against **\(model.user?.displayName ?? "your account")** with your name as the creator. The server rejects overlapping or future entries. Employee self-service entries with manager approval are not available yet.")
+                        .font(Typo.body).foregroundStyle(Palette.textSecondary).lineSpacing(4)
+                        .fixedSize(horizontal: false, vertical: true)
                 }
-                Button {
-                    Task { await submit() }
-                } label: {
-                    HStack {
-                        if submitting { ProgressView().controlSize(.small) }
-                        Text("Save Entry")
-                    }
-                }
-                .buttonStyle(.borderedProminent)
-                .disabled(validationMessage != nil || submitting)
             }
         }
-        .formStyle(.grouped)
-        .frame(maxWidth: 640)
         .task { await work.load() }
     }
 
@@ -553,7 +617,7 @@ struct ManualEntryView: View {
         submitting = true
         defer { submitting = false }
         let body = ManualTimeLogCreate(userId: user.id, taskId: taskId, projectId: choice.project.id,
-                                       startedAt: start, endedAt: end, timezone: TimeZone.current.identifier)
+                                       startedAt: startedAt, endedAt: endedAt, timezone: TimeZone.current.identifier)
         do { result = .success(try await service.createManualLog(body)) }
         catch { result = .failure(DashboardViewModel.map(error)) }
     }

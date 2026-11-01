@@ -3,79 +3,96 @@ import AppKit
 import ApplicationServices
 import CoreGraphics
 import IOKit.hid
+import UserNotifications
 import EffiLensKit
 
-/// macOS privacy permissions used by tracking. Requests always go through the
-/// system prompt / System Settings — never bypassed. Status shown is what the
-/// agent itself reports (it is the process that captures), falling back to the
-/// app's own preflight when the agent is offline.
-struct PermissionsView: View {
+/// macOS privacy permissions (prototype `.perm` rows: 32 pt blue icon tile,
+/// title, dim description, `Allow…` or a green "Allowed" pill). Requests
+/// always go through the system prompt / System Settings — never bypassed.
+/// Status is what the agent reports (it is the capturing process), falling
+/// back to the app's own preflight when the agent is offline.
+struct PermissionsList: View {
     @Environment(AppModel.self) private var model
     @State private var local = LocalPermissions.current()
-    var onDone: (() -> Void)?
+    @State private var notifications: UNAuthorizationStatus = .notDetermined
 
-    private var agentPermissions: AgentPermissions? { model.permissions }
+    var body: some View {
+        VStack(spacing: 8) {
+            PermissionRow(title: "Notifications", detail: "Tracking reminders and leave updates", symbol: "bell",
+                          granted: notifications == .authorized || notifications == .provisional) {
+                Task {
+                    if notifications == .denied {
+                        if let url = URL(string: "x-apple.systempreferences:com.apple.Notifications-Settings.extension") { NSWorkspace.shared.open(url) }
+                    } else {
+                        await DesktopNotifier.requestAuthorization()
+                    }
+                    await refresh()
+                }
+            }
+            PermissionRow(title: "Accessibility", detail: "Detect the active app and window title for accurate time", symbol: "hand.raised",
+                          granted: model.permissions?.accessibility ?? local.accessibility) {
+                LocalPermissions.requestAccessibility()
+                LocalPermissions.openSettings(pane: "Privacy_Accessibility")
+            }
+            PermissionRow(title: "Screen Recording", detail: "Optional — blurred active-window screenshots if your organisation enables them", symbol: "rectangle.dashed",
+                          granted: model.permissions?.screenRecording ?? local.screenRecording) {
+                LocalPermissions.requestScreenRecording()
+                LocalPermissions.openSettings(pane: "Privacy_ScreenCapture")
+            }
+            PermissionRow(title: "Input Monitoring", detail: "Counts keyboard and mouse activity — never what you type", symbol: "keyboard",
+                          granted: model.permissions?.inputMonitoring ?? local.inputMonitoring) {
+                LocalPermissions.requestInputMonitoring()
+                LocalPermissions.openSettings(pane: "Privacy_ListenEvent")
+            }
+            PermissionRow(title: "Open at Login", detail: loginDetail, symbol: "person.crop.circle.badge.checkmark",
+                          granted: model.agentRegistration == .enabled,
+                          actionTitle: model.agentRegistration == .notBundled ? nil : "Allow…") {
+                model.restartAgentConnection()
+                if model.agentRegistration == .requiresApproval { AgentLifecycle.openLoginItemsSettings() }
+            }
+            Text("Browser domains: macOS asks once per browser (Automation) the first time you track with it in front.")
+                .font(Typo.caption).foregroundStyle(Palette.textTertiary)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(.top, 2)
+        }
+        .task { await refresh() }
+        .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
+            Task { await refresh() }
+        }
+    }
+
+    private var loginDetail: String {
+        switch model.agentRegistration {
+        case .requiresApproval: return "Allow EffiLens under System Settings › General › Login Items"
+        case .notBundled: return "The tracking agent is not included in this build"
+        case .failed(let message): return "Couldn't register the agent: \(message)"
+        default: return "Start the tracking agent automatically"
+        }
+    }
+
+    private func refresh() async {
+        local = LocalPermissions.current()
+        notifications = await DesktopNotifier.authorizationStatus()
+        await model.refreshPermissions()
+    }
+}
+
+/// Sheet wrapper used from the main window's permission banner.
+struct PermissionsView: View {
+    var onDone: (() -> Void)?
 
     var body: some View {
         VStack(alignment: .leading, spacing: Space.l) {
-            VStack(alignment: .leading, spacing: Space.xs) {
-                Text("Permissions").font(Typo.title)
-                Text("EffiLens only captures while you are tracking time. Each permission can be changed later in System Settings.")
-                    .font(Typo.body).foregroundStyle(Palette.textSecondary)
-                    .fixedSize(horizontal: false, vertical: true)
-            }
-
-            PermissionRow(
-                title: "Accessibility",
-                detail: "Reads the title of the window you're working in.",
-                symbol: "accessibility",
-                granted: agentPermissions?.accessibility ?? local.accessibility,
-                request: {
-                    LocalPermissions.requestAccessibility()
-                    LocalPermissions.openSettings(pane: "Privacy_Accessibility")
-                }
-            )
-            PermissionRow(
-                title: "Screen Recording",
-                detail: "Takes blurred screenshots of the active window only — never the whole screen.",
-                symbol: "rectangle.dashed.badge.record",
-                granted: agentPermissions?.screenRecording ?? local.screenRecording,
-                request: {
-                    LocalPermissions.requestScreenRecording()
-                    LocalPermissions.openSettings(pane: "Privacy_ScreenCapture")
-                }
-            )
-            PermissionRow(
-                title: "Input Monitoring",
-                detail: "Counts keyboard and mouse activity. What you type is never read or stored.",
-                symbol: "keyboard",
-                granted: agentPermissions?.inputMonitoring ?? local.inputMonitoring,
-                request: {
-                    LocalPermissions.requestInputMonitoring()
-                    LocalPermissions.openSettings(pane: "Privacy_ListenEvent")
-                }
-            )
-
-            if model.agentRegistration == .requiresApproval {
-                Label("Allow “EffiLens” in Login Items so the tracking agent can run.", systemImage: "exclamationmark.triangle")
-                    .foregroundStyle(Palette.warning)
-                Button("Open Login Items") { AgentLifecycle.openLoginItemsSettings() }
-            }
-
+            OnboardingHeading(prefix: "A few ", emphasis: "permissions", subtitle: "EffiLens only captures while you are tracking time.")
+            PermissionsList()
             HStack {
-                Button("Refresh") { refresh() }
                 Spacer()
-                if let onDone { Button("Continue", action: onDone).buttonStyle(.borderedProminent) }
+                if let onDone { Button("Done", action: onDone).buttonStyle(.effiPrimary).keyboardShortcut(.defaultAction) }
             }
         }
-        .padding(Space.xxl)
-        .frame(maxWidth: 560)
-        .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in refresh() }
-    }
-
-    private func refresh() {
-        local = LocalPermissions.current()
-        Task { await model.refreshPermissions() }
+        .padding(28)
+        .frame(width: 520)
+        .background(Palette.surfaceRaised)
     }
 }
 
@@ -84,29 +101,31 @@ private struct PermissionRow: View {
     let detail: String
     let symbol: String
     let granted: Bool
+    var actionTitle: String? = "Allow…"
     let request: () -> Void
 
     var body: some View {
-        HStack(alignment: .top, spacing: Space.m) {
-            Image(systemName: symbol)
-                .font(.system(size: 18))
-                .foregroundStyle(Palette.accent)
-                .frame(width: 28)
-            VStack(alignment: .leading, spacing: Space.xxs) {
-                Text(title).font(Typo.bodyEmphasis)
-                Text(detail).font(Typo.caption).foregroundStyle(Palette.textSecondary)
-                    .fixedSize(horizontal: false, vertical: true)
+        HStack(spacing: 12) {
+            IconTile(symbol: symbol, tint: Palette.blueFill)
+            VStack(alignment: .leading, spacing: 1) {
+                Text(title).font(Typo.bodyEmphasis).foregroundStyle(Palette.textPrimary)
+                Text(detail).font(Typo.caption).foregroundStyle(Palette.textTertiary).fixedSize(horizontal: false, vertical: true)
             }
-            Spacer()
+            Spacer(minLength: Space.s)
             if granted {
-                StatusPill(text: "Allowed", tone: .success)
+                Pill(text: "Allowed", kind: .ok, symbol: "checkmark")
+            } else if let actionTitle {
+                Button(actionTitle, action: request).buttonStyle(.effi)
             } else {
-                Button("Allow…", action: request)
+                Pill(text: "Unavailable", kind: .gray)
             }
         }
-        .padding(Space.m)
-        .background(Palette.inset, in: RoundedRectangle(cornerRadius: Radius.card, style: .continuous))
+        .padding(.vertical, 11)
+        .padding(.horizontal, 12)
+        .background(Palette.textPrimary.opacity(0.02), in: RoundedRectangle(cornerRadius: Radius.task, style: .continuous))
+        .overlay(RoundedRectangle(cornerRadius: Radius.task, style: .continuous).strokeBorder(Palette.hairline))
         .accessibilityElement(children: .combine)
+        .accessibilityValue(granted ? "Allowed" : "Not allowed")
     }
 }
 
@@ -168,11 +187,12 @@ struct PermissionsBanner: View {
                      : "Tracking is limited: \(missing.joined(separator: ", ")) not allowed.")
                     .font(Typo.body)
                 Spacer()
-                Button("Review…") { showSheet = true }
+                Button("Review…") { showSheet = true }.buttonStyle(.effi)
             }
-            .padding(.horizontal, Space.l)
-            .padding(.vertical, Space.s)
+            .padding(.horizontal, 24)
+            .padding(.vertical, 9)
             .background(Palette.warning.opacity(0.12))
+            .overlay(alignment: .bottom) { Rectangle().fill(Palette.warning.opacity(0.3)).frame(height: 1) }
             .sheet(isPresented: $showSheet) {
                 PermissionsView(onDone: { showSheet = false })
                     .environment(model)

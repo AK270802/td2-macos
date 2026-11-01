@@ -52,4 +52,17 @@ final class DecodingTests: XCTestCase {
         XCTAssertTrue(json.contains("\"start_date\":\"2026-01-02\""))
         XCTAssertFalse(json.contains("user_id"), "nil user_id must be omitted so the server applies the caller's id")
     }
+
+    func testAgentRecentEventIgnoresPayloadContent() throws {
+        let json = Data("""
+        [{"event_uuid":"6f1c1d2e-0000-4000-8000-000000000001","user_id":"6f1c1d2e-0000-4000-8000-000000000002",
+          "tenant_id":"6f1c1d2e-0000-4000-8000-000000000003","event_type":"idle","ts":1793000000,"duration_sec":240,
+          "payload":{"app_name":"Secret App","window_title":"Private"}}]
+        """.utf8)
+        let events = try JSONCoding.makeDecoder().decode([AgentRecentEvent].self, from: json)
+        XCTAssertEqual(events.count, 1)
+        XCTAssertEqual(events[0].eventType, "idle")
+        XCTAssertEqual(events[0].durationSec, 240)
+        XCTAssertEqual(events[0].date, Date(timeIntervalSince1970: 1_793_000_000))
+    }
 }

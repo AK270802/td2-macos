@@ -54,6 +54,12 @@ public struct ProfileService: Sendable {
         try await api.send(.json(.patch, "/users/me", body: update))
     }
 
+    /// `POST /auth/forgot-password` (no auth) — the server emails a reset link
+    /// and answers the same way whether or not the address exists.
+    public func forgotPassword(email: String) async throws -> MessageResponse {
+        try await api.send(.json(.post, "/auth/forgot-password", body: ForgotPasswordRequest(email: email), auth: .none, idempotent: false))
+    }
+
     /// `PATCH /auth/change-password` → new `TokenResponse`.
     public func changePassword(_ request: ChangePasswordRequest) async throws -> TokenResponse {
         try await api.send(.json(.patch, "/auth/change-password", body: request, idempotent: false))

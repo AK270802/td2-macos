@@ -21,17 +21,11 @@ struct EffiLensApp: App {
 
     var body: some Scene {
         Window("EffiLens", id: SceneID.main) {
-            RootView()
-                .environment(model)
-                .frame(minWidth: 960, minHeight: 620)
-                .effiLensAppearance(appearance)
-                .task {
-                    appDelegate.model = model
-                    await model.start()
-                }
+            mainContent
         }
-        .defaultSize(width: 1200, height: 780)
-        .windowToolbarStyle(.unified(showsTitle: false))
+        .defaultSize(width: Metrics.onboardingWindow.width, height: Metrics.onboardingWindow.height)
+        .windowStyle(.hiddenTitleBar)
+        .windowResizability(.contentMinSize)
         .commands { EffiLensCommands(model: model) }
 
         Window("Mini Timer", id: SceneID.miniTimer) {
@@ -58,6 +52,31 @@ struct EffiLensApp: App {
                 .environment(model)
                 .effiLensAppearance(appearance)
         }
+    }
+}
+
+extension EffiLensApp {
+    @ViewBuilder
+    private var mainContent: some View {
+        #if DEBUG
+        if let screen = ReviewMode.screen {
+            ReviewHostView(screen: screen).environment(model)
+        } else {
+            liveRoot
+        }
+        #else
+        liveRoot
+        #endif
+    }
+
+    private var liveRoot: some View {
+        RootView()
+            .environment(model)
+            .effiLensAppearance(appearance)
+            .task {
+                appDelegate.model = model
+                await model.start()
+            }
     }
 }
 

@@ -1,0 +1,820 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>EffiLens for macOS — Interactive Prototype</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Instrument+Serif:ital@0;1&family=Inter+Tight:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+:root{
+  --midnight:#080E1C;--navy:#101B32;--panel:#1A2944;--gold:#D5A04A;--gold2:#F0C779;
+  --ok:#35C9A0;--blue:#4D91FF;--violet:#A17BEE;--red:#FF5F57;--amber:#FEBC2E;--green:#28C840;
+  --text:#EEF2FA;--text2:rgba(235,240,250,.66);--text3:rgba(235,240,250,.42);
+  --line:rgba(255,255,255,.08);--line2:rgba(255,255,255,.14);
+  --glass:rgba(22,34,58,.62);--glass2:rgba(30,44,72,.55);--glassHi:rgba(255,255,255,.06);
+  --sf:-apple-system,BlinkMacSystemFont,"SF Pro Text","Inter Tight","Helvetica Neue",sans-serif;
+  --serif:"Instrument Serif","New York",Georgia,serif;
+  --mono:"SF Mono","JetBrains Mono",ui-monospace,monospace;
+  --accent:var(--gold);
+}
+body.light{
+  --midnight:#E9EDF5;--navy:#F4F6FB;--panel:#FFFFFF;--text:#141B2C;--text2:rgba(20,27,44,.68);--text3:rgba(20,27,44,.42);
+  --line:rgba(0,0,0,.07);--line2:rgba(0,0,0,.12);--glass:rgba(248,250,255,.68);--glass2:rgba(255,255,255,.6);--glassHi:rgba(255,255,255,.6);
+}
+*{box-sizing:border-box;margin:0;padding:0}
+html,body{height:100%;overflow:hidden}
+body{font-family:var(--sf);font-size:13px;color:var(--text);-webkit-font-smoothing:antialiased;user-select:none;cursor:default;
+  background:#05080f}
+button{font:inherit;color:inherit;border:0;background:none;cursor:default}
+input,select,textarea{font:inherit;color:var(--text)}
+/* ===== Wallpaper ===== */
+#desktop{position:fixed;inset:0;overflow:hidden;
+  background:
+   radial-gradient(1200px 700px at 15% 20%,#1d3a7a 0%,transparent 60%),
+   radial-gradient(900px 700px at 85% 75%,#7a4e16 0%,transparent 60%),
+   radial-gradient(700px 500px at 60% 10%,#3b2a6e 0%,transparent 60%),
+   linear-gradient(160deg,#0a1226,#060a14 70%)}
+#desktop::after{content:"";position:absolute;inset:0;background:
+  repeating-radial-gradient(circle at 70% 120%,rgba(240,199,121,.05) 0 2px,transparent 2px 60px);pointer-events:none}
+body.light #desktop{background:radial-gradient(1200px 700px at 15% 20%,#9fc0ff 0%,transparent 60%),radial-gradient(900px 700px at 85% 75%,#ffd59a 0%,transparent 60%),linear-gradient(160deg,#dfe7f7,#f3ead9)}
+/* ===== Menu bar ===== */
+#menubar{position:fixed;top:0;left:0;right:0;height:26px;display:flex;align-items:center;gap:2px;padding:0 10px;z-index:900;
+  background:rgba(10,16,30,.42);backdrop-filter:blur(30px) saturate(180%);-webkit-backdrop-filter:blur(30px) saturate(180%);font-size:13px;color:#fff}
+body.light #menubar{background:rgba(255,255,255,.4);color:#000}
+#menubar .mi{padding:2px 9px;border-radius:5px;position:relative}
+#menubar .mi:hover,#menubar .mi.open{background:rgba(255,255,255,.18)}
+#menubar .mi b{font-weight:700}
+#menubar .right{margin-left:auto;display:flex;align-items:center;gap:2px}
+.mb-extra{display:flex;align-items:center;gap:6px;font-family:var(--mono);font-size:12px}
+.mb-extra .dot{width:7px;height:7px;border-radius:50%;background:var(--text3)}
+.mb-extra.on .dot{background:var(--ok);box-shadow:0 0 8px var(--ok)}
+.dropmenu{position:absolute;top:24px;left:0;min-width:230px;padding:5px;border-radius:9px;z-index:950;display:none;
+  background:rgba(30,38,58,.72);backdrop-filter:blur(40px) saturate(180%);-webkit-backdrop-filter:blur(40px) saturate(180%);
+  border:1px solid rgba(255,255,255,.14);box-shadow:0 18px 50px rgba(0,0,0,.45);color:#fff}
+body.light .dropmenu{background:rgba(246,246,248,.8);color:#111;border-color:rgba(0,0,0,.1)}
+.mi.open .dropmenu{display:block}
+.dropmenu div{padding:4px 10px;border-radius:5px;display:flex;justify-content:space-between;gap:20px}
+.dropmenu div:hover{background:var(--blue);color:#fff}
+.dropmenu hr{border:0;border-top:1px solid rgba(255,255,255,.12);margin:5px 6px}
+.dropmenu kbd{font-family:var(--sf);opacity:.55}
+/* ===== Glass / window ===== */
+.win{position:absolute;border-radius:14px;overflow:hidden;display:flex;flex-direction:column;
+  background:var(--glass);backdrop-filter:blur(50px) saturate(170%);-webkit-backdrop-filter:blur(50px) saturate(170%);
+  border:1px solid var(--line2);box-shadow:0 0 0 .5px rgba(0,0,0,.6),0 30px 80px rgba(0,0,0,.55),inset 0 1px 0 rgba(255,255,255,.08);
+  animation:winIn .35s cubic-bezier(.2,.9,.3,1.2)}
+@keyframes winIn{from{opacity:0;transform:scale(.94) translateY(10px)}to{opacity:1;transform:none}}
+.win.hide{display:none}
+.titlebar{height:38px;display:flex;align-items:center;padding:0 14px;gap:8px;flex:none;position:relative}
+.lights{display:flex;gap:8px}
+.lights i{width:12px;height:12px;border-radius:50%;display:block;box-shadow:inset 0 0 0 .5px rgba(0,0,0,.25);position:relative}
+.lights i:nth-child(1){background:var(--red)}.lights i:nth-child(2){background:var(--amber)}.lights i:nth-child(3){background:var(--green)}
+.lights:hover i::after{position:absolute;inset:0;display:grid;place-items:center;font-size:9px;font-weight:800;color:rgba(0,0,0,.55);line-height:12px;text-align:center}
+.lights:hover i:nth-child(1)::after{content:"×"}.lights:hover i:nth-child(2)::after{content:"–"}.lights:hover i:nth-child(3)::after{content:"+"}
+.titlebar .ttl{position:absolute;left:0;right:0;text-align:center;font-weight:600;color:var(--text2);pointer-events:none}
+/* ===== Installer ===== */
+#dmg{width:620px;height:400px;left:calc(50% - 310px);top:calc(50% - 210px)}
+.dmg-body{flex:1;position:relative;background:linear-gradient(180deg,rgba(8,14,28,.4),rgba(8,14,28,.75)),
+  radial-gradient(400px 200px at 50% 110%,rgba(213,160,74,.35),transparent)}
+.dmg-body h3{font-family:var(--serif);font-weight:400;font-size:30px;text-align:center;margin-top:26px}
+.dmg-body p{text-align:center;color:var(--text2);margin-top:4px}
+.dmg-row{display:flex;justify-content:space-around;align-items:center;margin-top:40px;padding:0 70px}
+.dmg-icon{display:flex;flex-direction:column;align-items:center;gap:8px;font-weight:500}
+.appicon{width:104px;height:104px;border-radius:24px;position:relative;
+  background:radial-gradient(circle at 30% 25%,#2a3f6b,#0b1428 70%);box-shadow:0 14px 30px rgba(0,0,0,.5),inset 0 1px 0 rgba(255,255,255,.18),inset 0 0 0 1px rgba(255,255,255,.06)}
+.appicon::before{content:"";position:absolute;inset:22px;border-radius:50%;border:5px solid var(--gold);border-right-color:transparent;transform:rotate(-30deg);box-shadow:0 0 18px rgba(240,199,121,.4)}
+.appicon::after{content:"";position:absolute;inset:40px;border-radius:50%;background:radial-gradient(circle at 35% 35%,var(--gold2),var(--gold) 60%,#8a5e1c)}
+.appicon.sm{width:64px;height:64px;border-radius:15px}.appicon.sm::before{inset:13px;border-width:3px}.appicon.sm::after{inset:24px}
+.appicon.xs{width:22px;height:22px;border-radius:6px;box-shadow:none}.appicon.xs::before{inset:4px;border-width:1.5px}.appicon.xs::after{inset:8px}
+.folder{width:100px;height:84px;position:relative}
+.folder::before{content:"";position:absolute;left:0;top:0;width:42px;height:16px;border-radius:6px 6px 0 0;background:#3d8de8}
+.folder::after{content:"A";position:absolute;inset:10px 0 0;border-radius:6px;background:linear-gradient(#6cb4ff,#3b8ff0);display:grid;place-items:center;font-size:30px;font-weight:800;color:rgba(255,255,255,.7);box-shadow:0 10px 20px rgba(0,0,0,.4)}
+.arrow{font-size:36px;color:var(--gold2);animation:nudge 1.4s infinite}
+@keyframes nudge{50%{transform:translateX(10px)}}
+.draggable{cursor:grab}.dragging{opacity:.4}
+.folder.over::after{filter:brightness(1.3);outline:3px solid var(--gold2)}
+.ghost-copy{position:absolute;bottom:18px;left:50%;transform:translateX(-50%);width:300px}
+#installer{width:720px;height:500px;left:calc(50% - 360px);top:calc(50% - 250px)}
+.inst{flex:1;display:flex;min-height:0}
+.inst-side{width:210px;padding:20px 18px;position:relative;background:linear-gradient(170deg,rgba(213,160,74,.18),transparent 60%);border-right:1px solid var(--line)}
+.inst-side .appicon{width:70px;height:70px;border-radius:17px;margin:4px 0 22px}.inst-side .appicon::before{inset:15px;border-width:3.5px}.inst-side .appicon::after{inset:27px}
+.step{display:flex;align-items:center;gap:9px;padding:6px 0;color:var(--text3);font-weight:500}
+.step i{width:9px;height:9px;border-radius:50%;border:1.5px solid currentColor}
+.step.done{color:var(--text2)}.step.done i{background:var(--text2);border-color:var(--text2)}
+.step.cur{color:var(--text)}.step.cur i{background:var(--gold);border-color:var(--gold);box-shadow:0 0 8px var(--gold)}
+.inst-main{flex:1;display:flex;flex-direction:column;min-width:0}
+.inst-content{flex:1;padding:22px 26px;overflow:auto}
+.inst-content h2{font-family:var(--serif);font-weight:400;font-size:28px;margin-bottom:10px}
+.inst-content p{color:var(--text2);line-height:1.55;margin-bottom:10px}
+.inst-foot{display:flex;justify-content:flex-end;gap:10px;padding:14px 20px;border-top:1px solid var(--line)}
+.license{height:220px;overflow:auto;padding:12px 14px;border-radius:8px;background:rgba(0,0,0,.25);border:1px solid var(--line);font-size:12px;line-height:1.6;color:var(--text2)}
+body.light .license{background:rgba(255,255,255,.6)}
+.disk{display:flex;gap:14px;margin-top:14px}
+.disk div{flex:1;padding:16px;border-radius:12px;border:1px solid var(--line2);text-align:center;background:var(--glassHi)}
+.disk div.sel{border-color:var(--gold);box-shadow:0 0 0 3px rgba(213,160,74,.25)}
+.disk .hd{font-size:38px}
+.bar{height:8px;border-radius:5px;background:rgba(255,255,255,.08);overflow:hidden}
+.bar>i{display:block;height:100%;width:0;border-radius:5px;background:linear-gradient(90deg,var(--gold),var(--gold2));transition:width .2s}
+.pw-sheet{position:absolute;left:50%;top:38px;transform:translateX(-50%);width:380px;padding:22px;border-radius:0 0 14px 14px;z-index:5;
+  background:var(--glass);backdrop-filter:blur(40px);-webkit-backdrop-filter:blur(40px);border:1px solid var(--line2);box-shadow:0 20px 50px rgba(0,0,0,.5);animation:sheet .3s ease}
+@keyframes sheet{from{transform:translate(-50%,-30px);opacity:0}}
+/* ===== Buttons & fields ===== */
+.btn{height:26px;padding:0 14px;border-radius:7px;font-weight:500;background:rgba(255,255,255,.1);border:.5px solid rgba(255,255,255,.12);box-shadow:0 1px 1px rgba(0,0,0,.2);display:inline-flex;align-items:center;gap:6px;white-space:nowrap}
+body.light .btn{background:#fff;border-color:rgba(0,0,0,.12)}
+.btn:active{filter:brightness(.85)}
+.btn.pri{background:linear-gradient(180deg,var(--gold2),var(--gold));color:#1b1405;border-color:transparent;font-weight:600}
+.btn.blue{background:linear-gradient(180deg,#5c9cff,#2f78f0);color:#fff;border-color:transparent}
+.btn.dan{background:rgba(255,95,87,.16);color:#ff8a84}
+.btn.lg{height:34px;padding:0 20px;border-radius:9px;font-size:14px}
+.btn[disabled]{opacity:.4;pointer-events:none}
+.field{width:100%;height:30px;padding:0 10px;border-radius:7px;background:rgba(0,0,0,.25);border:1px solid var(--line2);outline:none}
+body.light .field{background:#fff}
+.field:focus{border-color:var(--accent);box-shadow:0 0 0 3.5px color-mix(in oklab,var(--accent) 35%,transparent)}
+textarea.field{height:70px;padding:8px 10px;resize:none}
+label.lbl{display:block;font-size:11.5px;color:var(--text2);margin:12px 0 5px;font-weight:500}
+.tog{width:34px;height:20px;border-radius:12px;background:rgba(255,255,255,.18);position:relative;transition:.2s;flex:none}
+.tog::after{content:"";position:absolute;top:2px;left:2px;width:16px;height:16px;border-radius:50%;background:#fff;box-shadow:0 1px 3px rgba(0,0,0,.35);transition:.2s}
+.tog.on{background:var(--ok)}.tog.on::after{left:16px}
+.seg{display:inline-flex;padding:2px;border-radius:8px;background:rgba(0,0,0,.25);border:1px solid var(--line)}
+.seg button{padding:3px 12px;border-radius:6px;color:var(--text2);font-weight:500}
+.seg button.on{background:rgba(255,255,255,.14);color:var(--text);box-shadow:0 1px 2px rgba(0,0,0,.3)}
+body.light .seg button.on{background:#fff}
+.chk{display:flex;gap:9px;align-items:flex-start;margin:8px 0;color:var(--text2)}
+.chk input{accent-color:var(--gold);margin-top:2px}
+/* ===== App window ===== */
+#app{left:calc(50% - 600px);top:44px;width:1200px;height:calc(100% - 140px);min-height:560px;flex-direction:row}
+#app .titlebar{position:absolute;top:0;left:0;z-index:3}
+.sidebar{width:228px;flex:none;padding:46px 10px 12px;display:flex;flex-direction:column;background:rgba(10,18,36,.35);border-right:1px solid var(--line);overflow:auto}
+body.light .sidebar{background:rgba(235,238,245,.45)}
+.sb-search{margin:0 4px 12px;height:26px;border-radius:7px;background:rgba(255,255,255,.07);display:flex;align-items:center;gap:6px;padding:0 8px;color:var(--text3)}
+.sb-search input{background:none;border:0;outline:0;flex:1;font-size:12.5px}
+.sb-h{font-size:11px;font-weight:600;color:var(--text3);padding:10px 10px 4px}
+.sb-i{display:flex;align-items:center;gap:9px;padding:5px 10px;border-radius:7px;font-weight:500;color:var(--text)}
+.sb-i svg{width:16px;height:16px;color:var(--gold);flex:none}
+.sb-i.sub{padding-left:35px;font-weight:400;color:var(--text2)}
+.sb-i:hover{background:rgba(255,255,255,.05)}
+.sb-i.on{background:rgba(213,160,74,.22);color:var(--text)}
+.sb-i .badge{margin-left:auto;font-size:10.5px;background:var(--red);color:#fff;border-radius:9px;padding:0 6px;font-weight:600}
+.sb-user{margin-top:auto;display:flex;align-items:center;gap:9px;padding:10px;border-radius:10px;background:rgba(255,255,255,.04);border:1px solid var(--line)}
+.avatar{width:30px;height:30px;border-radius:50%;display:grid;place-items:center;font-weight:700;font-size:11.5px;color:#1b1405;background:linear-gradient(135deg,var(--gold2),var(--gold));flex:none}
+.main{flex:1;display:flex;flex-direction:column;min-width:0;background:rgba(8,14,28,.55)}
+body.light .main{background:rgba(250,251,254,.7)}
+.toolbar{height:52px;flex:none;display:flex;align-items:center;gap:10px;padding:0 18px;border-bottom:1px solid var(--line);background:rgba(16,27,50,.35)}
+body.light .toolbar{background:rgba(255,255,255,.5)}
+.toolbar h1{font-size:15px;font-weight:700}
+.toolbar .sub{color:var(--text3);font-size:12px}
+.toolbar .sp{flex:1}
+.tb-btn{width:30px;height:28px;border-radius:7px;display:grid;place-items:center;color:var(--text2);position:relative}
+.tb-btn:hover{background:rgba(255,255,255,.07)}
+.tb-btn svg{width:17px;height:17px}
+.tb-btn .pip{position:absolute;top:4px;right:5px;width:7px;height:7px;border-radius:50%;background:var(--red)}
+.sync{display:flex;align-items:center;gap:6px;font-size:11.5px;color:var(--text2);padding:3px 9px;border-radius:20px;background:rgba(53,201,160,.1);border:1px solid rgba(53,201,160,.25)}
+.sync i{width:6px;height:6px;border-radius:50%;background:var(--ok)}
+.sync.off{background:rgba(255,95,87,.1);border-color:rgba(255,95,87,.3)}.sync.off i{background:var(--red)}
+.content{flex:1;overflow:auto;padding:22px 24px 40px}
+.content::-webkit-scrollbar,.sidebar::-webkit-scrollbar{width:8px}
+.content::-webkit-scrollbar-thumb{background:rgba(255,255,255,.12);border-radius:4px}
+.view{animation:fade .3s ease}
+@keyframes fade{from{opacity:0;transform:translateY(6px)}}
+.hero-t{font-family:var(--serif);font-size:38px;font-weight:400;line-height:1.05;letter-spacing:-.3px}
+.hero-t em{color:var(--gold2)}
+.muted{color:var(--text2)}.dim{color:var(--text3)}
+.mono{font-family:var(--mono)}
+.grid{display:grid;gap:14px}
+.g2{grid-template-columns:1fr 1fr}.g3{grid-template-columns:repeat(3,1fr)}.g4{grid-template-columns:repeat(4,1fr)}
+.card{border-radius:14px;padding:16px;background:linear-gradient(180deg,rgba(255,255,255,.055),rgba(255,255,255,.02));border:1px solid var(--line);box-shadow:inset 0 1px 0 rgba(255,255,255,.05),0 8px 24px rgba(0,0,0,.18);position:relative}
+body.light .card{background:rgba(255,255,255,.85)}
+.card h4{font-size:12px;font-weight:600;color:var(--text2);margin-bottom:10px;display:flex;align-items:center;gap:6px}
+.card h4 .r{margin-left:auto}
+.kpi{font-family:var(--mono);font-size:26px;font-weight:600;letter-spacing:-.5px}
+.kpi small{font-size:12px;color:var(--text3);font-weight:400}
+.trend{font-size:11.5px;color:var(--ok)}
+.pill{display:inline-flex;align-items:center;gap:5px;font-size:11px;font-weight:600;padding:2px 8px;border-radius:20px}
+.pill.ok{background:rgba(53,201,160,.15);color:var(--ok)}.pill.wait{background:rgba(254,188,46,.15);color:#f7c95b}
+.pill.no{background:rgba(255,95,87,.15);color:#ff8a84}.pill.gray{background:rgba(255,255,255,.08);color:var(--text2)}
+.pill.blue{background:rgba(77,145,255,.15);color:#7fb0ff}.pill.vio{background:rgba(161,123,238,.15);color:#c3a6ff}
+table{width:100%;border-collapse:collapse}
+th{text-align:left;font-size:11px;color:var(--text3);font-weight:600;padding:7px 10px;border-bottom:1px solid var(--line)}
+td{padding:9px 10px;border-bottom:1px solid var(--line)}
+tr.hov:hover td{background:rgba(255,255,255,.03)}
+tbody tr:nth-child(even) td{background:rgba(255,255,255,.015)}
+.row{display:flex;align-items:center;gap:10px}
+.between{display:flex;align-items:center;justify-content:space-between;gap:10px}
+.ring{position:relative;display:grid;place-items:center}
+.ring svg{transform:rotate(-90deg)}
+.ring .c{position:absolute;text-align:center}
+.timer-big{font-family:var(--mono);font-size:56px;font-weight:500;letter-spacing:-2px}
+.bars{display:flex;align-items:flex-end;gap:10px;height:140px;padding-top:10px}
+.bars .b{flex:1;display:flex;flex-direction:column;align-items:center;gap:6px;height:100%;justify-content:flex-end}
+.bars .b i{display:block;width:100%;max-width:34px;border-radius:6px 6px 3px 3px;background:linear-gradient(180deg,var(--gold2),var(--gold));transition:height .6s cubic-bezier(.2,.9,.3,1)}
+.bars .b span{font-size:10.5px;color:var(--text3)}
+.listi{display:flex;align-items:center;gap:12px;padding:10px 4px;border-bottom:1px solid var(--line)}
+.listi:last-child{border:0}
+.ic{width:32px;height:32px;border-radius:9px;display:grid;place-items:center;flex:none}
+.ic svg{width:16px;height:16px}
+.cal{display:grid;grid-template-columns:repeat(7,1fr);gap:4px}
+.cal .h{font-size:10.5px;color:var(--text3);text-align:center;padding:4px;font-weight:600}
+.cal .d{min-height:74px;border-radius:8px;padding:6px;background:rgba(255,255,255,.025);border:1px solid var(--line);font-size:11.5px;display:flex;flex-direction:column;gap:3px}
+.cal .d.x{opacity:.3}.cal .d.today{border-color:var(--gold);box-shadow:inset 0 0 0 1px var(--gold)}
+.cal .d.we{background:rgba(255,255,255,.01)}
+.cal .ev{font-size:10px;padding:1px 5px;border-radius:4px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;font-weight:500}
+.ev.me{background:rgba(213,160,74,.25);color:var(--gold2)}.ev.team{background:rgba(77,145,255,.2);color:#8ab8ff}.ev.hol{background:rgba(53,201,160,.2);color:#6fe0c0}
+.ev.sick{background:rgba(161,123,238,.22);color:#c3a6ff}
+.tl{position:relative;padding-left:22px}
+.tl::before{content:"";position:absolute;left:6px;top:4px;bottom:4px;width:2px;background:var(--line2)}
+.tl .t{position:relative;padding-bottom:16px}
+.tl .t::before{content:"";position:absolute;left:-21px;top:3px;width:10px;height:10px;border-radius:50%;background:var(--panel);border:2px solid var(--gold)}
+.tl .t.ok::before{border-color:var(--ok)}.tl .t.no::before{border-color:var(--red)}
+.task{padding:12px;border-radius:10px;border:1px solid var(--line);margin-bottom:8px;display:flex;align-items:center;gap:12px;background:rgba(255,255,255,.02)}
+.task:hover{border-color:var(--line2)}
+.task.sel{border-color:var(--gold);background:rgba(213,160,74,.08)}
+.prog{height:5px;border-radius:3px;background:rgba(255,255,255,.08);overflow:hidden}
+.prog i{display:block;height:100%;border-radius:3px}
+.set-row{display:flex;align-items:center;justify-content:space-between;padding:11px 14px;border-bottom:1px solid var(--line)}
+.set-row:last-child{border:0}
+.set-group{border-radius:12px;background:rgba(255,255,255,.035);border:1px solid var(--line);margin-bottom:16px}
+.set-title{font-size:11.5px;font-weight:600;color:var(--text3);margin:0 4px 6px}
+.swatch{width:20px;height:20px;border-radius:50%;border:2px solid transparent;box-shadow:inset 0 0 0 1px rgba(0,0,0,.2)}
+.swatch.on{border-color:var(--text)}
+/* ===== Onboarding window ===== */
+#onboard{width:820px;height:560px;left:calc(50% - 410px);top:calc(50% - 280px);flex-direction:row}
+#onboard .titlebar{position:absolute;top:0;left:0;right:0;z-index:2}
+.ob-art{width:340px;flex:none;position:relative;overflow:hidden;background:linear-gradient(160deg,#122244,#080e1c)}
+.ob-art::before{content:"";position:absolute;width:520px;height:520px;left:-120px;top:120px;border-radius:50%;border:1px solid rgba(240,199,121,.25);box-shadow:0 0 0 40px rgba(240,199,121,.03),0 0 0 90px rgba(240,199,121,.025)}
+.ob-art .orb{position:absolute;width:220px;height:220px;border-radius:50%;left:60px;top:150px;background:radial-gradient(circle at 35% 30%,var(--gold2),var(--gold) 45%,#5a3a0e 80%);filter:blur(.3px);box-shadow:0 0 120px rgba(213,160,74,.45);animation:float 6s ease-in-out infinite}
+@keyframes float{50%{transform:translateY(-14px)}}
+.ob-art .cap{position:absolute;left:30px;bottom:30px;right:30px;color:#fff}
+.ob-art .cap h2{font-family:var(--serif);font-weight:400;font-size:36px;line-height:1}
+.ob-art .cap p{color:rgba(255,255,255,.6);margin-top:8px}
+.ob-main{flex:1;padding:54px 44px 28px;display:flex;flex-direction:column;min-width:0}
+.ob-main h1{font-family:var(--serif);font-weight:400;font-size:34px;line-height:1.05}
+.ob-dots{display:flex;gap:6px;margin-top:auto;padding-top:14px;align-items:center}
+.ob-dots i{width:6px;height:6px;border-radius:3px;background:var(--line2);transition:.3s}
+.ob-dots i.on{width:20px;background:var(--gold)}
+.perm{display:flex;align-items:center;gap:12px;padding:11px 12px;border-radius:10px;border:1px solid var(--line);margin-bottom:8px;background:rgba(255,255,255,.02)}
+.perm .ic{background:rgba(77,145,255,.15);color:var(--blue)}
+.yesno{display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-top:14px}
+.yesno ul{list-style:none}.yesno li{padding:4px 0;color:var(--text2);display:flex;gap:7px}
+.conn{display:inline-flex;align-items:center;gap:6px;font-size:11.5px;color:var(--text2)}
+.conn i{width:7px;height:7px;border-radius:50%;background:var(--ok);box-shadow:0 0 6px var(--ok)}
+/* ===== Mini timer / popover / notifications ===== */
+#mini{width:300px;right:30px;bottom:110px;border-radius:18px;padding:0}
+#mini .mt{padding:12px 14px;display:flex;align-items:center;gap:12px;cursor:grab}
+#popover{position:fixed;top:32px;right:180px;width:330px;z-index:960;border-radius:14px;padding:14px;display:none;
+  background:rgba(22,32,54,.7);backdrop-filter:blur(50px) saturate(180%);-webkit-backdrop-filter:blur(50px) saturate(180%);border:1px solid var(--line2);box-shadow:0 24px 60px rgba(0,0,0,.5);animation:winIn .2s ease}
+body.light #popover{background:rgba(250,250,252,.8)}
+#popover.show{display:block}
+#notifs{position:fixed;top:36px;right:12px;width:340px;z-index:980;display:flex;flex-direction:column;gap:8px}
+.notif{display:flex;gap:11px;padding:11px 13px;border-radius:16px;background:rgba(40,48,70,.62);backdrop-filter:blur(40px) saturate(180%);-webkit-backdrop-filter:blur(40px) saturate(180%);border:1px solid rgba(255,255,255,.14);box-shadow:0 12px 34px rgba(0,0,0,.4);animation:nIn .45s cubic-bezier(.2,.9,.3,1.2);color:#fff}
+body.light .notif{background:rgba(246,246,250,.82);color:#111}
+.notif.out{animation:nOut .3s forwards}
+@keyframes nIn{from{transform:translateX(120%)}}@keyframes nOut{to{transform:translateX(120%);opacity:0}}
+.notif b{display:block;font-size:13px}.notif p{font-size:12.5px;opacity:.8;margin-top:1px}
+.notif .when{margin-left:auto;font-size:11px;opacity:.5;white-space:nowrap}
+/* Dialog */
+#scrim{position:fixed;inset:0;z-index:990;display:none;place-items:center;background:rgba(0,0,0,.25)}
+#scrim.show{display:grid}
+.alert{width:290px;padding:20px 18px 16px;border-radius:14px;text-align:center;background:rgba(36,44,66,.78);backdrop-filter:blur(50px);-webkit-backdrop-filter:blur(50px);border:1px solid var(--line2);box-shadow:0 30px 70px rgba(0,0,0,.55);animation:winIn .25s ease}
+body.light .alert{background:rgba(245,245,248,.9)}
+.alert h3{font-size:13.5px;margin:10px 0 6px}.alert p{font-size:12px;color:var(--text2);line-height:1.45}
+.alert .acts{display:flex;flex-direction:column;gap:7px;margin-top:16px}
+.alert .acts .btn{justify-content:center;width:100%}
+.alert.wide{width:460px;text-align:left}
+/* Dock */
+#dock{position:fixed;bottom:8px;left:50%;transform:translateX(-50%);display:flex;gap:8px;padding:7px 9px;border-radius:22px;z-index:800;
+  background:rgba(255,255,255,.12);backdrop-filter:blur(30px) saturate(180%);-webkit-backdrop-filter:blur(30px) saturate(180%);border:1px solid rgba(255,255,255,.18)}
+.dk{width:52px;height:52px;border-radius:13px;display:grid;place-items:center;font-size:26px;position:relative;transition:transform .18s;transform-origin:bottom}
+.dk:hover{transform:scale(1.28) translateY(-6px)}
+.dk .run{position:absolute;bottom:-5px;left:50%;width:4px;height:4px;border-radius:50%;background:rgba(255,255,255,.8);transform:translateX(-50%);display:none}
+.dk.running .run{display:block}
+.dk .appicon{width:52px;height:52px;border-radius:13px}.dk .appicon::before{inset:11px;border-width:3px}.dk .appicon::after{inset:20px}
+.dk .bdg{position:absolute;top:-4px;right:-4px;background:var(--red);color:#fff;font-size:10px;font-weight:700;border-radius:9px;padding:1px 5px;font-family:var(--sf)}
+.dk .tip{position:absolute;bottom:68px;left:50%;transform:translateX(-50%);padding:3px 10px;border-radius:6px;font-size:12px;background:rgba(40,40,50,.8);color:#fff;white-space:nowrap;display:none}
+.dk:hover .tip{display:block}
+.f1{background:linear-gradient(#5ad4ff,#1d7cf2)}.f2{background:linear-gradient(#fff,#ddd)}.f3{background:linear-gradient(#8e8e93,#48484a)}.f4{background:linear-gradient(#ffe066,#ffb000)}
+.desk-icon{position:absolute;right:24px;top:44px;display:flex;flex-direction:column;align-items:center;gap:5px;width:90px;color:#fff;font-size:12px;text-shadow:0 1px 3px rgba(0,0,0,.8);z-index:1}
+.desk-icon .disk-ic{width:58px;height:46px;border-radius:6px;background:linear-gradient(#e7e7ea,#a9a9b0);box-shadow:0 6px 14px rgba(0,0,0,.4);position:relative}
+.desk-icon .disk-ic::after{content:"";position:absolute;left:8px;right:8px;bottom:8px;height:4px;border-radius:2px;background:#666}
+.desk-icon.sel span{background:var(--blue);border-radius:4px;padding:0 4px}
+.desk-icon.app{top:130px}
+.hint{position:fixed;left:16px;bottom:16px;z-index:850;max-width:300px;padding:10px 12px;border-radius:12px;font-size:11.5px;color:rgba(255,255,255,.75);background:rgba(0,0,0,.35);backdrop-filter:blur(20px);border:1px solid rgba(255,255,255,.1);line-height:1.5}
+.hint b{color:var(--gold2)}
+.empty{text-align:center;padding:50px;color:var(--text3)}
+.offline-banner{display:none;margin:-22px -24px 18px;padding:9px 24px;background:rgba(255,95,87,.12);border-bottom:1px solid rgba(255,95,87,.3);color:#ff9d97;font-size:12.5px}
+body.offline .offline-banner{display:flex}
+@media (max-width:1240px){#app{left:10px;width:calc(100% - 20px)}}
+</style>
+</head>
+<body>
+<div id="desktop">
+  <div class="desk-icon sel" id="dmgIcon" ondblclick="openDMG()"><div class="disk-ic"></div><span>EffiLens.dmg</span></div>
+  <div class="desk-icon app hide" id="appDeskIcon" style="display:none" ondblclick="launchApp()"><div class="appicon sm"></div><span>EffiLens</span></div>
+</div>
+
+<!-- MENU BAR -->
+<div id="menubar">
+  <div class="mi" onclick="toggleMenu(this)" style="font-size:15px;padding:0 10px"><svg width="14" height="16" viewBox="0 0 170 200" fill="currentColor"><path d="M150 170c-8 12-17 24-30 24s-17-8-32-8-20 8-32 8-22-12-30-24C10 145-2 100 15 70c8-15 23-24 40-24 12 0 24 9 32 9s22-10 37-9c6 0 24 2 35 19-1 1-21 12-21 37 0 29 26 39 26 39s-6 18-14 29zM118 30c7-8 11-19 10-30-10 0-22 7-29 15-6 7-12 18-10 29 11 1 22-6 29-14z"/></svg>
+    <div class="dropmenu"><div>About This Mac</div><hr><div>System Settings…</div><div>App Store…</div><hr><div>Sleep</div><div>Restart…</div><div>Shut Down…</div><hr><div>Lock Screen<kbd>⌃⌘Q</kbd></div></div></div>
+  <div class="mi" id="appMenu" onclick="toggleMenu(this)"><b id="activeApp">Finder</b>
+    <div class="dropmenu" id="appMenuDrop"><div>About Finder</div><hr><div>Settings…<kbd>⌘,</kbd></div><hr><div>Hide Finder<kbd>⌘H</kbd></div></div></div>
+  <div class="mi" onclick="toggleMenu(this)">File<div class="dropmenu"><div onclick="go('apply')">New Leave Request<kbd>⌘N</kbd></div><div onclick="go('manual')">Manual Time Entry<kbd>⇧⌘N</kbd></div><hr><div onclick="closeAll()">Close Window<kbd>⌘W</kbd></div></div></div>
+  <div class="mi" onclick="toggleMenu(this)">Edit<div class="dropmenu"><div>Undo<kbd>⌘Z</kbd></div><div>Redo<kbd>⇧⌘Z</kbd></div><hr><div>Copy<kbd>⌘C</kbd></div><div>Paste<kbd>⌘V</kbd></div></div></div>
+  <div class="mi" onclick="toggleMenu(this)">View<div class="dropmenu"><div onclick="toggleMini()">Show Mini Timer<kbd>⌥⌘M</kbd></div><div onclick="toggleTheme()">Toggle Appearance<kbd>⌥⌘L</kbd></div><hr><div onclick="toggleOffline()">Simulate Offline</div></div></div>
+  <div class="mi" onclick="toggleMenu(this)">Tracking<div class="dropmenu"><div onclick="toggleTrack()">Start / Pause<kbd>⌃⌥Space</kbd></div><div onclick="stopTrack()">Stop<kbd>⌃⌥S</kbd></div><hr><div onclick="go('tracker')">Time Tracker</div><div onclick="go('history')">Time History</div></div></div>
+  <div class="mi" onclick="toggleMenu(this)">Window<div class="dropmenu"><div>Minimize<kbd>⌘M</kbd></div><div>Zoom</div><hr><div onclick="launchApp()">EffiLens</div></div></div>
+  <div class="mi" onclick="toggleMenu(this)">Help<div class="dropmenu"><div onclick="showUpdate()">Check for Updates…</div><div onclick="showRecovery()">Simulate Session Recovery</div><div onclick="showError()">Simulate Error</div><div onclick="go('about')">Diagnostics</div></div></div>
+  <div class="right">
+    <div class="mi mb-extra" id="mbExtra" onclick="togglePopover(event)" style="display:none"><span class="dot"></span><span id="mbTime">0:00:00</span></div>
+    <div class="mi">▮▮▮</div>
+    <div class="mi" style="font-size:12px">⌕</div>
+    <div class="mi" id="clock"></div>
+  </div>
+</div>
+
+<!-- DMG WINDOW -->
+<div class="win hide" id="dmg">
+  <div class="titlebar"><div class="lights" onclick="hideW('dmg')"><i></i><i></i><i></i></div><div class="ttl">EffiLens 3.0</div></div>
+  <div class="dmg-body">
+    <h3>Install <em style="color:var(--gold2)">EffiLens</em></h3>
+    <p>Drag EffiLens to your Applications folder — or use the guided installer.</p>
+    <div class="dmg-row">
+      <div class="dmg-icon draggable" draggable="true" id="dragApp"><div class="appicon"></div>EffiLens</div>
+      <div class="arrow">⟶</div>
+      <div class="dmg-icon" id="dropApps"><div class="folder"></div>Applications</div>
+    </div>
+    <div style="text-align:center;margin-top:26px" id="dmgActions"><button class="btn" onclick="openInstaller()">Open Guided Installer (.pkg)</button></div>
+    <div class="ghost-copy hide" id="copyBox" style="display:none"><div class="muted" style="font-size:11.5px;margin-bottom:6px;text-align:center">Copying “EffiLens” to Applications…</div><div class="bar"><i id="copyBar"></i></div></div>
+  </div>
+</div>
+
+<!-- INSTALLER -->
+<div class="win hide" id="installer">
+  <div class="titlebar"><div class="lights" onclick="hideW('installer')"><i></i><i></i><i></i></div><div class="ttl">Install EffiLens</div></div>
+  <div class="inst">
+    <div class="inst-side">
+      <div class="appicon"></div>
+      <div id="steps"></div>
+    </div>
+    <div class="inst-main">
+      <div class="inst-content" id="instContent"></div>
+      <div class="inst-foot" id="instFoot"></div>
+    </div>
+  </div>
+</div>
+
+<!-- ONBOARDING -->
+<div class="win hide" id="onboard">
+  <div class="titlebar"><div class="lights"><i></i><i></i><i></i></div></div>
+  <div class="ob-art"><div class="orb"></div><div class="cap"><h2>See your<br><em>work</em> clearly.</h2><p>Time, focus and leave — beautifully in one place.</p></div></div>
+  <div class="ob-main" id="obMain"></div>
+</div>
+
+<!-- MAIN APP -->
+<div class="win hide" id="app">
+  <div class="titlebar"><div class="lights" onclick="askQuit()"><i></i><i></i><i></i></div></div>
+  <aside class="sidebar" id="sidebar"></aside>
+  <section class="main">
+    <div class="toolbar">
+      <div><h1 id="vTitle">Dashboard</h1><div class="sub" id="vSub"></div></div>
+      <div class="sp"></div>
+      <div class="sync" id="syncPill"><i></i><span>Synced · just now</span></div>
+      <button class="tb-btn" title="Mini timer" onclick="toggleMini()"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="3" y="7" width="18" height="10" rx="5"/><circle cx="8" cy="12" r="1.5" fill="currentColor"/></svg></button>
+      <button class="tb-btn" title="Notifications" onclick="go('notifications')"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M6 16V11a6 6 0 1 1 12 0v5l1.5 2h-15z"/><path d="M10 20a2 2 0 0 0 4 0"/></svg><span class="pip" id="pip"></span></button>
+      <button class="btn pri" onclick="go('apply')">+ Apply Leave</button>
+    </div>
+    <div class="content" id="content"></div>
+  </section>
+</div>
+
+<!-- MINI TIMER -->
+<div class="win hide" id="mini">
+  <div class="mt" id="miniDrag">
+    <div class="ring" id="miniRing"></div>
+    <div style="flex:1;min-width:0">
+      <div class="mono" style="font-size:22px;font-weight:600" id="miniTime">0:00:00</div>
+      <div class="dim" style="font-size:11.5px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis" id="miniTask">No task selected</div>
+    </div>
+    <button class="tb-btn" onclick="toggleTrack()" id="miniPlay" title="Start/Pause"></button>
+    <button class="tb-btn" onclick="stopTrack()" title="Stop"><svg viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="6" width="12" height="12" rx="2.5"/></svg></button>
+    <button class="tb-btn" onclick="toggleMini()" title="Close" style="width:20px">×</button>
+  </div>
+</div>
+
+<div id="popover"></div>
+<div id="notifs"></div>
+<div id="scrim"></div>
+
+<!-- DOCK -->
+<div id="dock">
+  <div class="dk f1">😀<span class="tip">Finder</span><span class="run" style="display:block"></span></div>
+  <div class="dk f2">🧭<span class="tip">Safari</span></div>
+  <div class="dk f4">📝<span class="tip">Notes</span></div>
+  <div class="dk" id="dockApp" style="display:none" onclick="launchApp()"><div class="appicon"></div><span class="tip">EffiLens</span><span class="run"></span><span class="bdg" id="dockBdg" style="display:none">3</span></div>
+  <div class="dk f3">⚙️<span class="tip">System Settings</span></div>
+</div>
+
+<div class="hint" id="hint"><b>Start here →</b> Double-click <b>EffiLens.dmg</b> on the desktop. Drag the app into Applications, or open the guided installer.</div>
+
+<script>
+/* ============ ICONS (SF-Symbol style) ============ */
+const I={
+ dash:'<path d="M4 13h6V4H4zM14 20h6v-9h-6zM4 20h6v-4H4zM14 7h6V4h-6z"/>',
+ clock:'<circle cx="12" cy="12" r="8.5"/><path d="M12 7v5l3 2"/>',
+ folder:'<path d="M3.5 7.5A1.5 1.5 0 0 1 5 6h4l2 2h8a1.5 1.5 0 0 1 1.5 1.5V17A1.5 1.5 0 0 1 19 18.5H5A1.5 1.5 0 0 1 3.5 17z"/>',
+ list:'<path d="M9 6h11M9 12h11M9 18h11"/><circle cx="4.5" cy="6" r="1"/><circle cx="4.5" cy="12" r="1"/><circle cx="4.5" cy="18" r="1"/>',
+ hist:'<path d="M4 12a8 8 0 1 0 2.4-5.7L4 8.5"/><path d="M4 4v4.5h4.5M12 8v4l3 2"/>',
+ leaf:'<path d="M5 19c0-8 5-13 14-14-1 9-6 14-14 14z"/><path d="M5 19l7-7"/>',
+ cal:'<rect x="3.5" y="5" width="17" height="15" rx="2.5"/><path d="M3.5 10h17M8 3v4M16 3v4"/>',
+ plus:'<circle cx="12" cy="12" r="8.5"/><path d="M12 8v8M8 12h8"/>',
+ tray:'<path d="M4 13l2.5-7h11L20 13v5a1.5 1.5 0 0 1-1.5 1.5h-13A1.5 1.5 0 0 1 4 18z"/><path d="M4 13h5l1 2h4l1-2h5"/>',
+ pie:'<path d="M12 3.5v8.5h8.5A8.5 8.5 0 1 1 12 3.5z"/><path d="M15 3.8A8.5 8.5 0 0 1 20.2 9H15z"/>',
+ team:'<circle cx="9" cy="8" r="3.2"/><path d="M3 19c.6-3.4 3-5 6-5s5.4 1.6 6 5"/><circle cx="17" cy="9" r="2.5"/><path d="M16 14c2.6 0 4.4 1.4 5 4"/>',
+ chart:'<path d="M4 20V4M4 20h16"/><path d="M8 16v-4M12 16V8M16 16v-6"/>',
+ bell:'<path d="M6 16V11a6 6 0 1 1 12 0v5l1.5 2h-15z"/><path d="M10 20a2 2 0 0 0 4 0"/>',
+ gear:'<circle cx="12" cy="12" r="3"/><path d="M12 2.8v2.4M12 18.8v2.4M2.8 12h2.4M18.8 12h2.4M5.5 5.5l1.7 1.7M16.8 16.8l1.7 1.7M5.5 18.5l1.7-1.7M16.8 7.2l1.7-1.7"/>',
+ user:'<circle cx="12" cy="8.5" r="3.8"/><path d="M4.5 20c.8-4 3.8-6 7.5-6s6.7 2 7.5 6"/>',
+ info:'<circle cx="12" cy="12" r="8.5"/><path d="M12 11v5M12 8h.01"/>',
+ check:'<path d="M5 12.5l4.5 4.5L19 7.5"/>',
+ play:'<path d="M8 5.5v13l10.5-6.5z" fill="currentColor"/>',
+ pause:'<rect x="6.5" y="5.5" width="3.8" height="13" rx="1" fill="currentColor"/><rect x="13.7" y="5.5" width="3.8" height="13" rx="1" fill="currentColor"/>',
+ lock:'<rect x="5" y="10.5" width="14" height="10" rx="2.5"/><path d="M8 10.5V8a4 4 0 0 1 8 0v2.5"/>',
+ eye:'<path d="M2.5 12S6 5.5 12 5.5 21.5 12 21.5 12 18 18.5 12 18.5 2.5 12 2.5 12z"/><circle cx="12" cy="12" r="3"/>',
+ screen:'<rect x="3" y="4.5" width="18" height="12" rx="2"/><path d="M8 20h8M12 16.5V20"/>',
+ hand:'<path d="M8 13V5.5a1.5 1.5 0 0 1 3 0V11M11 10V4.5a1.5 1.5 0 0 1 3 0V11M14 10.5V6a1.5 1.5 0 0 1 3 0v7c0 4-2.5 7-6 7-2.5 0-4-1.3-5.5-3.5L3.5 13a1.6 1.6 0 0 1 2.5-2L8 13"/>',
+ wifi:'<path d="M2.5 9a14 14 0 0 1 19 0M5.5 12.5a9.5 9.5 0 0 1 13 0M8.6 16a5 5 0 0 1 6.8 0"/><circle cx="12" cy="19" r="1" fill="currentColor"/>',
+ sun:'<circle cx="12" cy="12" r="4"/><path d="M12 2.5v2M12 19.5v2M2.5 12h2M19.5 12h2M5.3 5.3l1.4 1.4M17.3 17.3l1.4 1.4M5.3 18.7l1.4-1.4M17.3 6.7l1.4-1.4"/>',
+ x:'<path d="M6 6l12 12M18 6L6 18"/>',
+ inbox:'<path d="M4 4h16v16H4z"/><path d="M4 14h5l1 2h4l1-2h5"/>',
+};
+const ic=(n,s=16)=>`<svg viewBox="0 0 24 24" width="${s}" height="${s}" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">${I[n]}</svg>`;
+const $=s=>document.querySelector(s);
+
+/* ============ STATE ============ */
+const S={
+ user:{name:'Aarav Mehta',email:'aarav.mehta@effilens.io',role:'Senior Product Designer',org:'Lumen Labs Pvt. Ltd.',init:'AM'},
+ tracking:false,elapsed:0,todayBase:5*3600+12*60,task:null,
+ projects:[
+  {id:'p1',name:'Atlas Mobile Banking',client:'Northwind Bank',color:'var(--gold)',hours:128,progress:72},
+  {id:'p2',name:'EffiLens Desktop',client:'Internal',color:'var(--blue)',hours:342,progress:48},
+  {id:'p3',name:'Helios Analytics',client:'Solaris Inc.',color:'var(--violet)',hours:86,progress:31},
+  {id:'p4',name:'Orbit CRM Redesign',client:'Orbit Co.',color:'var(--ok)',hours:214,progress:89},
+ ],
+ tasks:[
+  {id:'t1',p:'p2',name:'macOS menu bar extra & popover',pri:'High',due:'Nov 4',est:12,done:7.5},
+  {id:'t2',p:'p2',name:'Leave calendar SwiftUI grid',pri:'High',due:'Nov 6',est:16,done:4},
+  {id:'t3',p:'p1',name:'KYC onboarding flow polish',pri:'Medium',due:'Nov 8',est:10,done:9},
+  {id:'t4',p:'p1',name:'Transaction detail sheet',pri:'Low',due:'Nov 12',est:6,done:1},
+  {id:'t5',p:'p3',name:'Cohort retention chart',pri:'Medium',due:'Nov 9',est:8,done:2.5},
+  {id:'t6',p:'p4',name:'Pipeline kanban interactions',pri:'High',due:'Nov 3',est:14,done:13},
+  {id:'t7',p:'p2',name:'Privacy disclosure copy review',pri:'Low',due:'Nov 15',est:3,done:0},
+ ],
+ history:[
+  {d:'Today',t:'t1',start:'09:12',end:'11:40',dur:'2:28'},{d:'Today',t:'t6',start:'11:55',end:'13:10',dur:'1:15'},
+  {d:'Today',t:'t2',start:'14:02',end:'15:31',dur:'1:29'},{d:'Yesterday',t:'t3',start:'09:30',end:'12:45',dur:'3:15'},
+  {d:'Yesterday',t:'t5',start:'13:40',end:'16:20',dur:'2:40'},{d:'Yesterday',t:'t1',start:'16:30',end:'18:05',dur:'1:35'},
+  {d:'Oct 29',t:'t6',start:'10:00',end:'13:30',dur:'3:30'},{d:'Oct 29',t:'t4',start:'14:15',end:'17:00',dur:'2:45'},
+ ],
+ balances:[
+  {k:'Annual',total:18,used:7,color:'var(--gold)'},{k:'Sick',total:10,used:2,color:'var(--violet)'},
+  {k:'Casual',total:8,used:5,color:'var(--blue)'},{k:'Comp-off',total:3,used:0,color:'var(--ok)'},
+ ],
+ requests:[
+  {id:'LR-2041',type:'Annual',from:'Nov 24',to:'Nov 28',days:5,status:'Pending',reason:'Family trip to Goa',applied:'Oct 30'},
+  {id:'LR-2017',type:'Sick',from:'Oct 14',to:'Oct 15',days:2,status:'Approved',reason:'Fever & rest',applied:'Oct 14'},
+  {id:'LR-1998',type:'Casual',from:'Sep 26',to:'Sep 26',days:1,status:'Approved',reason:'Personal errand',applied:'Sep 22'},
+  {id:'LR-1950',type:'Annual',from:'Aug 12',to:'Aug 14',days:3,status:'Rejected',reason:'Sprint release overlap',applied:'Aug 1'},
+  {id:'LR-1902',type:'Casual',from:'Jul 4',to:'Jul 4',days:1,status:'Cancelled',reason:'Plan changed',applied:'Jun 30'},
+ ],
+ holidays:[
+  {d:'Nov 1',n:'Kannada Rajyotsava',t:'Regional'},{d:'Nov 15',n:'Guru Nanak Jayanti',t:'Public'},{d:'Dec 25',n:'Christmas',t:'Public'},
+  {d:'Dec 31',n:'Year-end Company Day',t:'Company'},{d:'Jan 1',n:'New Year’s Day',t:'Public'},{d:'Jan 26',n:'Republic Day',t:'Public'},
+ ],
+ team:[
+  {n:'Priya Sharma',r:'Engineering Lead',s:'Working',h:'6:42',init:'PS',c:'#4D91FF'},
+  {n:'Rohan Kapoor',r:'iOS Engineer',s:'Working',h:'5:10',init:'RK',c:'#35C9A0'},
+  {n:'Neha Iyer',r:'QA Engineer',s:'On leave',h:'—',init:'NI',c:'#A17BEE'},
+  {n:'Kabir Singh',r:'Backend Engineer',s:'Idle',h:'4:05',init:'KS',c:'#F0C779'},
+  {n:'Ananya Rao',r:'Product Manager',s:'In meeting',h:'3:50',init:'AR',c:'#FF8A84'},
+  {n:'Vikram Das',r:'DevOps',s:'Offline',h:'0:00',init:'VD',c:'#8E8E93'},
+ ],
+ notifs:[
+  {t:'Leave approved',b:'Your sick leave for Oct 14–15 was approved by Priya.',w:'2h',k:'ok',read:false},
+  {t:'Break reminder',b:'You’ve been focused for 90 minutes. Time to stretch.',w:'3h',k:'gold',read:false},
+  {t:'Sync completed',b:'14 sessions synchronised with Lumen Labs server.',w:'5h',k:'blue',read:false},
+  {t:'Idle activity detected',b:'4 minutes of idle time were excluded.',w:'Yesterday',k:'vio',read:true},
+  {t:'Upcoming leave',b:'Annual leave starts in 23 days (Nov 24).',w:'Yesterday',k:'gold',read:true},
+ ],
+ settings:{launch:true,menubar:true,mini:true,idle:true,apps:true,shots:true,blur:true,sound:true,breaks:true,leaveN:true,dock:true,freq:'10 min',ret:'30 days',accent:'#D5A04A'},
+ view:'dashboard',reqSel:'LR-2041',filter:'All',offline:false,installed:false,onboarded:false,
+ calMonth:10, // November (0-based)
+};
+const taskBy=id=>S.tasks.find(t=>t.id===id), projBy=id=>S.projects.find(p=>p.id===id);
+const fmt=s=>{const h=Math.floor(s/3600),m=Math.floor(s%3600/60),x=s%60;return `${h}:${String(m).padStart(2,'0')}:${String(x).padStart(2,'0')}`};
+const fmtHM=s=>`${Math.floor(s/3600)}h ${String(Math.floor(s%3600/60)).padStart(2,'0')}m`;
+
+/* ============ CLOCK / MENUS ============ */
+function tickClock(){const d=new Date();$('#clock').textContent=d.toLocaleDateString('en-US',{weekday:'short',month:'short',day:'numeric'})+'  '+d.toLocaleTimeString('en-US',{hour:'numeric',minute:'2-digit'})}
+setInterval(tickClock,1000);tickClock();
+function toggleMenu(el){const o=el.classList.contains('open');document.querySelectorAll('#menubar .mi.open').forEach(m=>m.classList.remove('open'));if(!o)el.classList.add('open');event.stopPropagation()}
+document.addEventListener('click',e=>{document.querySelectorAll('#menubar .mi.open').forEach(m=>m.classList.remove('open'));if(!e.target.closest('#popover')&&!e.target.closest('#mbExtra'))$('#popover').classList.remove('show')});
+function setActiveApp(n){$('#activeApp').textContent=n;$('#appMenuDrop').innerHTML=`<div onclick="go('about')">About ${n}</div><hr><div onclick="go('settings')">Settings…<kbd>⌘,</kbd></div><div onclick="showUpdate()">Check for Updates…</div><hr><div>Hide ${n}<kbd>⌘H</kbd></div><div onclick="askQuit()">Quit ${n}<kbd>⌘Q</kbd></div>`}
+const show=id=>{$('#'+id).classList.remove('hide');$('#'+id).style.display=''};
+const hideW=id=>{$('#'+id).classList.add('hide')};
+function hint(h){$('#hint').innerHTML=h;$('#hint').style.display=h?'block':'none'}
+
+/* ============ NOTIFICATIONS ============ */
+function notify(title,body,{icon=true}={}){
+ const n=document.createElement('div');n.className='notif';
+ n.innerHTML=`<div class="appicon xs" style="width:34px;height:34px;border-radius:9px;flex:none"></div><div style="min-width:0"><b>${title}</b><p>${body}</p></div><span class="when">now</span>`;
+ n.querySelector('.appicon').style.cssText+=';';
+ n.onclick=()=>{n.remove();if(S.onboarded)go('notifications')};
+ $('#notifs').prepend(n);
+ if(S.settings.sound) beep();
+ setTimeout(()=>{n.classList.add('out');setTimeout(()=>n.remove(),300)},4800);
+}
+function beep(){try{const a=new (window.AudioContext||window.webkitAudioContext)(),o=a.createOscillator(),g=a.createGain();o.type='sine';o.frequency.setValueAtTime(880,a.currentTime);o.frequency.exponentialRampToValueAtTime(1320,a.currentTime+.08);g.gain.setValueAtTime(.06,a.currentTime);g.gain.exponentialRampToValueAtTime(.0001,a.currentTime+.35);o.connect(g);g.connect(a.destination);o.start();o.stop(a.currentTime+.36)}catch(e){}}
+
+/* ============ DIALOGS ============ */
+function dialog(html,wide){const s=$('#scrim');s.innerHTML=`<div class="alert ${wide?'wide':''}">${html}</div>`;s.classList.add('show')}
+function closeDialog(){$('#scrim').classList.remove('show')}
+function askQuit(){
+ if(!S.tracking){closeAll();return}
+ dialog(`<div class="appicon sm" style="margin:0 auto"></div><h3>Quit EffiLens while tracking?</h3><p>You have an active session on “${taskBy(S.task)?.name||'task'}” (${fmt(S.elapsed)}). Quitting will stop and save it.</p>
+ <div class="acts"><button class="btn pri" onclick="stopTrack();closeDialog();closeAll()">Stop & Quit</button><button class="btn" onclick="closeDialog();hideW('app');notify('EffiLens is still running','Tracking continues in the menu bar.')">Keep Running in Menu Bar</button><button class="btn" onclick="closeDialog()">Cancel</button></div>`)
+}
+function closeAll(){hideW('app');hideW('mini');$('#dockApp').classList.remove('running');$('#mbExtra').style.display=S.tracking?'':'none';setActiveApp('Finder')}
+function showUpdate(){
+ dialog(`<div class="row" style="gap:14px;align-items:flex-start"><div class="appicon sm"></div><div style="flex:1"><h3 style="margin-top:0">A new version of EffiLens is available!</h3><p>EffiLens 3.1 is now available — you have 3.0.2. Would you like to download it now?</p>
+ <div class="license" style="height:110px;margin-top:10px"><b>What’s new in 3.1</b><br>• Liquid Glass refinements for macOS Tahoe<br>• Team leave heat-map<br>• Faster sync (2× fewer requests)<br>• Fixes idle-detection after sleep</div>
+ <div id="updProg" style="display:none;margin-top:12px"><div class="bar"><i id="updBar"></i></div><div class="dim" style="font-size:11px;margin-top:5px" id="updTxt">Downloading…</div></div>
+ <div class="row" style="justify-content:flex-end;margin-top:14px"><button class="btn" onclick="closeDialog()">Remind Me Later</button><button class="btn pri" id="updBtn" onclick="doUpdate()">Install Update</button></div></div></div>`,true)
+}
+function doUpdate(){$('#updProg').style.display='block';$('#updBtn').disabled=true;let p=0;const t=setInterval(()=>{p+=4;$('#updBar').style.width=p+'%';$('#updTxt').textContent=p<70?`Downloading… ${(p*0.48).toFixed(1)} MB of 48 MB`:p<100?'Verifying signature…':'Ready to relaunch';if(p>=100){clearInterval(t);$('#updBtn').disabled=false;$('#updBtn').textContent='Install & Relaunch';$('#updBtn').onclick=()=>{closeDialog();notify('EffiLens updated','You’re now on version 3.1.')}}},80)}
+function showRecovery(){dialog(`<div class="appicon sm" style="margin:0 auto"></div><h3>Recover previous session?</h3><p>EffiLens quit unexpectedly while tracking “Leave calendar SwiftUI grid”. 0:42:18 of time can be recovered.</p><div class="acts"><button class="btn pri" onclick="S.task='t2';S.elapsed=2538;closeDialog();startTrack();notify('Session recovered','Tracking resumed on Leave calendar SwiftUI grid.')">Recover & Resume</button><button class="btn" onclick="closeDialog();notify('Session saved','Recovered time saved as a draft entry.')">Save Without Resuming</button><button class="btn dan" onclick="closeDialog()">Discard</button></div>`)}
+function showError(){dialog(`<div style="font-size:40px">⚠️</div><h3>Couldn’t reach Lumen Labs server</h3><p>The request to sync time entries failed (HTTP 503). Your data is safe locally and will retry automatically.</p><div class="acts"><button class="btn blue" onclick="closeDialog();notify('Retrying…','Sync will retry in 30 seconds.')">Retry Now</button><button class="btn" onclick="closeDialog();go('about')">Open Diagnostics</button><button class="btn" onclick="closeDialog()">OK</button></div>`)}
+
+/* ============ DMG / INSTALLER ============ */
+document.addEventListener('click',e=>{const d=e.target.closest('.desk-icon');document.querySelectorAll('.desk-icon').forEach(x=>x.classList.toggle('sel',x===d))});
+function openDMG(){show('dmg');hint('<b>Drag</b> the EffiLens icon onto Applications to install — or click <b>Open Guided Installer</b>.')}
+const dragApp=$('#dragApp'),dropApps=$('#dropApps');
+dragApp.addEventListener('dragstart',e=>{e.dataTransfer.setData('text','app');dragApp.classList.add('dragging')});
+dragApp.addEventListener('dragend',()=>dragApp.classList.remove('dragging'));
+dropApps.addEventListener('dragover',e=>{e.preventDefault();dropApps.querySelector('.folder').classList.add('over')});
+dropApps.addEventListener('dragleave',()=>dropApps.querySelector('.folder').classList.remove('over'));
+dropApps.addEventListener('drop',e=>{e.preventDefault();dropApps.querySelector('.folder').classList.remove('over');copyToApps()});
+dropApps.addEventListener('click',copyToApps);
+function copyToApps(){$('#dmgActions').style.display='none';$('#copyBox').style.display='block';let p=0;const t=setInterval(()=>{p+=5;$('#copyBar').style.width=p+'%';if(p>=100){clearInterval(t);finishInstall();hideW('dmg')}},60)}
+function finishInstall(){S.installed=true;$('#appDeskIcon').style.display='';$('#dockApp').style.display='';$('#dmgIcon').style.display='none';notify('EffiLens installed','Open EffiLens from the Dock to get started.');hint('<b>Installed!</b> Click the <b>EffiLens</b> icon in the Dock to launch.')}
+const ISTEPS=['Introduction','License','Destination','Installation Type','Installation','Summary'];let istep=0,iagree=false;
+function openInstaller(){hideW('dmg');show('installer');setActiveApp('Installer');istep=0;renderInst();hint('Walk through the <b>guided installer</b>. The password is pre-filled — just click Install Software.')}
+function renderInst(){
+ $('#steps').innerHTML=ISTEPS.map((s,i)=>`<div class="step ${i<istep?'done':i===istep?'cur':''}"><i></i>${s}</div>`).join('');
+ const c=$('#instContent'),f=$('#instFoot');
+ const back=istep>0&&istep<4?`<button class="btn" onclick="istep--;renderInst()">Go Back</button>`:'';
+ if(istep===0){c.innerHTML=`<h2>Welcome to the EffiLens Installer</h2><p>You will be guided through the steps necessary to install EffiLens 3.0 for macOS — the native time-tracking and leave-management companion for your team.</p>
+  <div class="card" style="margin-top:16px"><div class="row"><div class="ic" style="background:rgba(213,160,74,.18);color:var(--gold)">${ic('check')}</div><div><b>Universal app</b><div class="dim">Optimised for Apple silicon and Intel · macOS 13 Ventura or later</div></div></div>
+  <div class="row" style="margin-top:12px"><div class="ic" style="background:rgba(77,145,255,.18);color:var(--blue)">${ic('lock')}</div><div><b>Notarised by Apple</b><div class="dim">Signed by Lumen Labs Pvt. Ltd. (Team ID 7KQ2X9LM4P)</div></div></div>
+  <div class="row" style="margin-top:12px"><div class="ic" style="background:rgba(53,201,160,.18);color:var(--ok)">${ic('screen')}</div><div><b>Menu bar & mini timer</b><div class="dim">Track time without opening the full app</div></div></div></div>`;
+  f.innerHTML=`<button class="btn" onclick="hideW('installer')">Cancel</button><button class="btn blue" onclick="istep=1;renderInst()">Continue</button>`}
+ if(istep===1){c.innerHTML=`<h2>Software License Agreement</h2><div class="license"><b>EFFILENS END USER LICENSE AGREEMENT</b><br><br>1. Grant. Lumen Labs grants you a non-exclusive licence to use EffiLens on Apple-branded computers you own or control, for work purposes authorised by your organisation.<br><br>2. Data. EffiLens records work sessions, active application names and optional screenshots strictly as configured by your organisation. It never records keystroke contents, passwords, or personal browsing in private windows.<br><br>3. Privacy. You may view everything EffiLens has collected about you from Settings → Privacy at any time.<br><br>4. Updates. Updates are delivered via the in-app updater and are signed and notarised.<br><br>5. Termination. This licence terminates automatically when your organisation removes your seat.<br><br>6. Disclaimer. The software is provided “as is”, without warranty of any kind…</div>
+  <label class="chk"><input type="checkbox" ${iagree?'checked':''} onchange="iagree=this.checked;renderInst()"> I have read and agree to the terms of the Software License Agreement.</label>`;
+  f.innerHTML=`<button class="btn" onclick="alert('Saved EffiLens-License.pdf to Downloads')">Save…</button><span style="flex:1"></span>${back}<button class="btn blue" ${iagree?'':'disabled'} onclick="istep=2;renderInst()">Agree & Continue</button>`}
+ if(istep===2){c.innerHTML=`<h2>Select a Destination</h2><p>How do you want to install this software?</p><div class="disk"><div class="sel" onclick="this.parentNode.querySelectorAll('div').forEach(x=>x.classList.remove('sel'));this.classList.add('sel')"><div class="hd">💽</div><b>Macintosh HD</b><div class="dim">412.6 GB available</div></div><div onclick="this.parentNode.querySelectorAll('div').forEach(x=>x.classList.remove('sel'));this.classList.add('sel')"><div class="hd">👤</div><b>Only for me</b><div class="dim">~/Applications</div></div></div><p style="margin-top:14px">Installing this software requires 86.4 MB of space.</p>`;
+  f.innerHTML=`${back}<button class="btn blue" onclick="istep=3;renderInst()">Continue</button>`}
+ if(istep===3){c.innerHTML=`<h2>Standard Install on “Macintosh HD”</h2><p>This will take 86.4 MB of space on your computer. Customise components below.</p>
+  <div class="set-group" style="margin-top:10px">${[['EffiLens.app','Core application',1,1],['Menu Bar Agent','Status item & quick actions',1,0],['Mini Timer Widget','Floating always-on-top timer',1,0],['Launch at Login helper','Starts tracking agent at login',1,0],['Command-line tools','effilens CLI for automation',0,0]].map(r=>`<div class="set-row"><div><b>${r[0]}</b><div class="dim" style="font-size:11.5px">${r[1]}</div></div><div class="tog ${r[2]?'on':''}" ${r[3]?'style="opacity:.5"':'onclick="this.classList.toggle(\'on\')"'}></div></div>`).join('')}</div>`;
+  f.innerHTML=`${back}<button class="btn blue" onclick="askPw()">Install</button>`}
+ if(istep===4){c.innerHTML=`<h2>Installing EffiLens</h2><p id="iTxt">Preparing for installation…</p><div class="bar" style="margin-top:30px"><i id="iBar"></i></div><p class="dim" style="margin-top:10px;font-size:11.5px" id="iTime">Install time remaining: About a minute</p>`;f.innerHTML=`<button class="btn" disabled>Go Back</button><button class="btn blue" disabled>Continue</button>`;
+  let p=0;const msgs=['Preparing for installation…','Writing files…','Registering menu bar agent…','Registering login item…','Optimising for Apple silicon…','Running package scripts…','Validating packages…'];
+  const t=setInterval(()=>{p+=1.6;$('#iBar').style.width=Math.min(p,100)+'%';$('#iTxt').textContent=msgs[Math.min(msgs.length-1,Math.floor(p/15))];$('#iTime').textContent=`Install time remaining: ${Math.max(1,Math.ceil((100-p)/12))} seconds`;if(p>=100){clearInterval(t);istep=5;renderInst()}},50)}
+ if(istep===5){c.innerHTML=`<div style="text-align:center;padding-top:30px"><div style="width:76px;height:76px;margin:0 auto;border-radius:50%;background:rgba(53,201,160,.15);display:grid;place-items:center;color:var(--ok)">${ic('check',40)}</div><h2 style="margin-top:18px">The installation was completed successfully.</h2><p>EffiLens has been installed in your Applications folder.<br>Find it in Launchpad, the Dock, or Spotlight (⌘ Space).</p></div>`;
+  f.innerHTML=`<button class="btn" onclick="hideW('installer');finishInstall();setActiveApp('Finder')">Close</button><button class="btn pri" onclick="hideW('installer');finishInstall();launchApp()">Open EffiLens</button>`}
+}
+function askPw(){const s=document.createElement('div');s.className='pw-sheet';s.innerHTML=`<div class="row" style="align-items:flex-start;gap:14px"><div style="font-size:34px">🔒</div><div style="flex:1"><b>Installer is trying to install new software.</b><p class="muted" style="font-size:12px;margin:4px 0 10px">Enter your password to allow this.</p><label class="lbl" style="margin-top:0">User Name</label><input class="field" value="Aarav Mehta"><label class="lbl">Password</label><input class="field" type="password" value="••••••••"><div class="row" style="justify-content:flex-end;margin-top:14px"><button class="btn" onclick="this.closest('.pw-sheet').remove()">Cancel</button><button class="btn blue" onclick="this.closest('.pw-sheet').remove();istep=4;renderInst()">Install Software</button></div></div></div>`;$('#installer').appendChild(s)}
+
+/* ============ LAUNCH / ONBOARDING ============ */
+function launchApp(){
+ if(!S.installed)return;
+ $('#dockApp').classList.add('running');setActiveApp('EffiLens');
+ if(!S.onboarded){show('onboard');obStep=0;renderOb();hint('Sign in with the pre-filled demo account and walk through onboarding.');return}
+ show('app');render();hint('');
+}
+let obStep=0;const perms={notif:false,acc:false,screen:false,login:true};
+function renderOb(){
+ const m=$('#obMain');const dots=`<div class="ob-dots">${[0,1,2,3].map(i=>`<i class="${i===obStep?'on':''}"></i>`).join('')}<span style="flex:1"></span>`;
+ if(obStep===0)m.innerHTML=`<div class="row"><div class="appicon sm" style="width:44px;height:44px;border-radius:11px"></div><div><b style="font-size:15px">EffiLens</b><div class="dim" style="font-size:11.5px">Lumen Labs Workspace</div></div></div>
+  <h1 style="margin-top:28px">Welcome <em style="color:var(--gold2)">back</em>.</h1><p class="muted" style="margin-top:6px">Sign in with your organisation account.</p>
+  <label class="lbl">Work email</label><input class="field" id="em" value="${S.user.email}">
+  <label class="lbl">Password</label><input class="field" type="password" id="pw" value="password123">
+  <div class="between" style="margin-top:10px"><label class="chk" style="margin:0"><input type="checkbox" checked> Remember this Mac</label><a style="color:var(--gold2);cursor:pointer" onclick="notify('Reset link sent','Check ${S.user.email} for a password reset link.')">Forgot password?</a></div>
+  <button class="btn pri lg" style="margin-top:20px;justify-content:center" id="signBtn" onclick="signIn()">Sign In</button>
+  <button class="btn lg" style="margin-top:8px;justify-content:center" onclick="signIn()">🔑 Sign in with SSO</button>
+  <div id="err" style="color:#ff8a84;font-size:12px;margin-top:8px"></div>
+  ${dots}<span class="conn"><i></i>api.lumenlabs.effilens.io · Connected</span></div>`;
+ if(obStep===1)m.innerHTML=`<h1>Hi Aarav — let’s set up<br>this <em style="color:var(--gold2)">Mac</em>.</h1><p class="muted" style="margin-top:8px">We’re registering your device with ${S.user.org}.</p>
+  <div class="card" style="margin-top:22px" id="setupCard">${['Verifying organisation','Registering device “Aarav’s MacBook Pro”','Downloading tracking policy','Syncing projects & tasks','Fetching leave balances'].map((s,i)=>`<div class="row" style="padding:7px 0" id="su${i}"><span class="ring" style="width:18px">${spinner()}</span><span class="muted">${s}</span></div>`).join('')}</div>
+  <div class="row dim" style="margin-top:12px;font-size:11.5px">Device ID: MBP-M3-7F2A-91C4 · macOS 15.1 · Apple M3 Pro</div>
+  ${dots}<button class="btn pri" id="obNext" disabled onclick="obStep=2;renderOb()">Continue</button></div>`;
+ if(obStep===2)m.innerHTML=`<h1>Your privacy, <em style="color:var(--gold2)">clearly</em>.</h1><p class="muted" style="margin-top:6px">Here’s exactly what EffiLens records on this Mac.</p>
+  <div class="yesno"><div class="card"><h4 style="color:var(--ok)">${ic('check',14)} Records</h4><ul><li>✓ Work session start / stop</li><li>✓ Active app & window title</li><li>✓ Keyboard/mouse activity level</li><li>✓ Screenshots (every 10 min, blurred)</li></ul></div>
+  <div class="card"><h4 style="color:#ff8a84">${ic('x',14)} Never records</h4><ul><li>✕ What you type or passwords</li><li>✕ Private browsing windows</li><li>✕ Microphone or camera</li><li>✕ Anything when tracking is off</li></ul></div></div>
+  <label class="chk" style="margin-top:16px"><input type="checkbox" id="consent" onchange="$('#obNext').disabled=!this.checked"> I understand and consent to EffiLens recording work activity as described.</label>
+  ${dots}<button class="btn" onclick="obStep=1;renderOb()">Back</button><button class="btn pri" id="obNext" disabled onclick="obStep=3;renderOb()">I Agree</button></div>`;
+ if(obStep===3){const P=[['notif','bell','Notifications','Tracking reminders and leave updates'],['acc','hand','Accessibility','Detect active app for accurate time'],['screen','screen','Screen Recording','Optional, for policy screenshots'],['login','user','Open at Login','Start the menu bar agent automatically']];
+  m.innerHTML=`<h1>A few <em style="color:var(--gold2)">permissions</em>.</h1><p class="muted" style="margin-top:6px">macOS will ask you to confirm each one.</p><div style="margin-top:16px">${P.map(p=>`<div class="perm"><div class="ic">${ic(p[1])}</div><div style="flex:1"><b>${p[2]}</b><div class="dim" style="font-size:11.5px">${p[3]}</div></div>${perms[p[0]]?`<span class="pill ok">${ic('check',11)} Allowed</span>`:`<button class="btn" onclick="grant('${p[0]}','${p[2]}')">Allow…</button>`}</div>`).join('')}</div>
+  ${dots}<button class="btn" onclick="obStep=2;renderOb()">Back</button><button class="btn pri" onclick="finishOb()">${Object.values(perms).every(Boolean)?'Get Started':'Continue Anyway'}</button></div>`}
+ if(obStep===1)runSetup();
+}
+const spinner=()=>`<svg width="16" height="16" viewBox="0 0 24 24" style="animation:spin 1s linear infinite"><circle cx="12" cy="12" r="9" fill="none" stroke="var(--gold)" stroke-width="2.5" stroke-dasharray="40 60" stroke-linecap="round"/></svg><style>@keyframes spin{to{transform:rotate(360deg)}}</style>`;
+function runSetup(){let i=0;const t=setInterval(()=>{const r=$('#su'+i);if(!r){clearInterval(t);return}r.querySelector('.ring').innerHTML=`<span style="color:var(--ok)">${ic('check',16)}</span>`;r.querySelector('span:last-child').style.color='var(--text)';i++;if(i===5){clearInterval(t);$('#obNext').disabled=false}},550)}
+function signIn(){const e=$('#em').value,p=$('#pw').value;if(!e.includes('@')||p.length<4){$('#err').textContent='Enter a valid email and password.';return}
+ $('#signBtn').innerHTML=spinner()+' Signing in…';setTimeout(()=>{obStep=1;renderOb()},900)}
+function grant(k,name){dialog(`<div class="appicon sm" style="margin:0 auto"></div><h3>“EffiLens” would like to ${k==='notif'?'send you notifications':k==='login'?'open at login':'access '+name}.</h3><p>${k==='notif'?'Notifications may include alerts, sounds and icon badges.':k==='screen'?'Grant access in System Settings → Privacy & Security → Screen Recording.':'This lets EffiLens detect the frontmost application.'}</p><div class="acts"><button class="btn blue" onclick="perms['${k}']=true;closeDialog();renderOb()">${k==='notif'||k==='login'?'Allow':'Open System Settings'}</button><button class="btn" onclick="closeDialog()">Don’t Allow</button></div>`)}
+function finishOb(){S.onboarded=true;hideW('onboard');show('app');render();hint('');$('#mbExtra').style.display='';
+ setTimeout(()=>notify('Welcome to EffiLens','Pick a task and press ⌃⌥Space to start tracking.'),700);
+ setTimeout(()=>hint('<b>Tip:</b> Click the timer in the <b>menu bar</b> for quick actions. Use <b>View → Simulate Offline</b> and <b>Help</b> for system states.'),2000)}
+
+/* ============ NAV ============ */
+const NAV=[
+ ['','dashboard','dash','Dashboard'],
+ ['Time Tracking','tracker','clock','Time Tracker'],['','projects','folder','Projects',1],['','tasks','list','Assigned Tasks',1],['','history','hist','Time History',1],['','manual','plus','Manual Entry',1],
+ ['Leave Management','leave','leaf','Leave Overview'],['','apply','plus','Apply for Leave',1],['','requests','tray','My Requests',1],['','calendar','cal','Leave Calendar',1],['','balance','pie','Leave Balance',1],['','holidays','sun','Holidays',1],
+ ['Workspace','team','team','Team'],['','approvals','inbox','Approvals'],['','reports','chart','Reports'],['','notifications','bell','Notifications'],['','activity','hist','Activity'],
+ ['','settings','gear','Settings'],['','about','info','About & Diagnostics'],
+];
+const TITLES={dashboard:['Dashboard','Today’s overview'],tracker:['Time Tracker','Start, pause and stop sessions'],projects:['Projects','4 assigned projects'],tasks:['Assigned Tasks','Search and select tasks'],history:['Time History','Daily and weekly records'],manual:['Manual Time Entry','Subject to manager approval'],leave:['Leave Overview','Balance, holidays and requests'],apply:['Apply for Leave','New request'],requests:['My Leave Requests','All requests'],detail:['Request Details',''],calendar:['Leave Calendar','Personal & team'],balance:['Leave Balance','FY 2026–27'],holidays:['Holiday Calendar','Public & company'],team:['Team Overview','Design & Platform squad'],member:['Team Member',''],approvals:['Approval Inbox','Manager view'],reports:['Reports','Productivity, time, attendance, leave'],notifications:['Notification Centre',''],activity:['Activity Timeline','Recent events'],settings:['Settings',''],about:['About & Diagnostics','']};
+function renderSidebar(){
+ const unread=S.notifs.filter(n=>!n.read).length;
+ $('#sidebar').innerHTML=`<div class="sb-search">⌕<input placeholder="Search" onkeydown="if(event.key==='Enter'){go('tasks');setTimeout(()=>{$('#tq').value=this.value;filterTasks()},50)}"></div>`+
+ NAV.map(n=>(n[0]?`<div class="sb-h">${n[0]}</div>`:'')+`<div class="sb-i ${n[4]?'sub':''} ${S.view===n[1]||(n[1]==='requests'&&S.view==='detail')||(n[1]==='team'&&S.view==='member')?'on':''}" onclick="go('${n[1]}')">${n[4]?'':ic(n[2])}${n[3]}${n[1]==='notifications'&&unread?`<span class="badge">${unread}</span>`:''}${n[1]==='approvals'?`<span class="badge" style="background:var(--gold);color:#1b1405">2</span>`:''}</div>`).join('')+
+ `<div class="sb-user" onclick="go('settings');setTab='account';render()"><div class="avatar">${S.user.init}</div><div style="min-width:0"><b style="font-size:12.5px">${S.user.name}</b><div class="dim" style="font-size:11px">${S.tracking?'<span style="color:var(--ok)">● Tracking</span>':'● Available'}</div></div></div>`;
+ $('#pip').style.display=unread?'':'none';$('#dockBdg').style.display=unread?'':'none';$('#dockBdg').textContent=unread;
+}
+function go(v){if(!S.onboarded)return;S.view=v;if($('#app').classList.contains('hide')){show('app');$('#dockApp').classList.add('running');setActiveApp('EffiLens')}$('#popover').classList.remove('show');render();$('#content').scrollTop=0}
+function render(){renderSidebar();const [t,s]=TITLES[S.view]||['',''];$('#vTitle').textContent=t;$('#vSub').textContent=s;$('#content').innerHTML=`<div class="offline-banner between"><span>⚠︎ You’re offline. Tracking continues locally — 3 sessions waiting to sync.</span><button class="btn" onclick="toggleOffline()">Reconnect</button></div><div class="view">${(V[S.view]||V.dashboard)()}</div>`;after[S.view]&&after[S.view]()}
+
+/* ============ RING helper ============ */
+function ring(pct,size=120,stroke=10,color='var(--gold)',inner=''){const r=(size-stroke)/2,c=2*Math.PI*r;return `<div class="ring" style="width:${size}px;height:${size}px"><svg width="${size}" height="${size}"><defs><linearGradient id="gg${size}" x1="0" x2="1"><stop offset="0" stop-color="#F0C779"/><stop offset="1" stop-color="#D5A04A"/></linearGradient></defs><circle cx="${size/2}" cy="${size/2}" r="${r}" fill="none" stroke="rgba(255,255,255,.08)" stroke-width="${stroke}"/><circle cx="${size/2}" cy="${size/2}" r="${r}" fill="none" stroke="${color==='var(--gold)'?`url(#gg${size})`:color}" stroke-width="${stroke}" stroke-linecap="round" stroke-dasharray="${c}" stroke-dashoffset="${c*(1-Math.min(pct,1))}" style="transition:stroke-dashoffset .6s"/></svg><div class="c">${inner}</div></div>`}
+const statusPill=s=>`<span class="pill ${s==='Approved'?'ok':s==='Pending'?'wait':s==='Rejected'?'no':'gray'}">${s}</span>`;
+
+/* ============ VIEWS ============ */
+let setTab='general',histRange='Day',repTab='Productivity';
+const V={
+dashboard(){const today=S.todayBase+S.elapsed,t=taskBy(S.task);const days=[['Mon',7.8],['Tue',8.4],['Wed',6.9],['Thu',8.1],['Fri',7.4],['Sat',today/3600],['Sun',0]];
+ return `<div class="between" style="align-items:flex-end;margin-bottom:20px"><div><div class="dim" style="font-weight:600;letter-spacing:.06em;font-size:11px">${new Date().toLocaleDateString('en-US',{weekday:'long',month:'long',day:'numeric'}).toUpperCase()}</div><div class="hero-t">Good evening, <em>Aarav</em>.</div></div><button class="btn pri lg" onclick="${S.tracking?'toggleTrack()':"go('tracker')"}">${S.tracking?ic('pause',14)+' Pause':ic('play',14)+' Start Tracking'}</button></div>
+ <div class="grid g4" style="margin-bottom:14px">
+  <div class="card"><h4>${ic('clock',14)} Today</h4><div class="kpi" id="dToday">${fmtHM(today)}</div><div class="trend">▲ 12% vs. avg</div></div>
+  <div class="card"><h4>${ic('chart',14)} This week</h4><div class="kpi">${(38.6+S.elapsed/3600).toFixed(1)}<small> / 40h</small></div><div class="prog" style="margin-top:10px"><i style="width:96%;background:var(--blue)"></i></div></div>
+  <div class="card"><h4>${ic('eye',14)} Productivity</h4><div class="kpi">87<small>%</small></div><div class="trend">▲ 4 pts this week</div></div>
+  <div class="card"><h4>${ic('leaf',14)} Leave left</h4><div class="kpi">${S.balances.reduce((a,b)=>a+b.total-b.used,0)}<small> days</small></div><div class="dim" style="font-size:11.5px">1 request pending</div></div>
+ </div>
+ <div class="grid" style="grid-template-columns:1.25fr 1fr;margin-bottom:14px">
+  <div class="card"><h4>Active session<span class="r">${S.tracking?'<span class="pill ok">● Live</span>':'<span class="pill gray">Idle</span>'}</span></h4>
+   <div class="row" style="gap:22px">${ring(today/(8*3600),140,11,'var(--gold)',`<div class="mono" style="font-size:20px;font-weight:600" id="dRing">${fmt(S.elapsed)}</div><div class="dim" style="font-size:10.5px">of 8h goal</div>`)}
+   <div style="flex:1;min-width:0"><div class="dim" style="font-size:11px">${t?projBy(t.p).name:'No task selected'}</div><div style="font-size:17px;font-weight:600;margin:3px 0 12px">${t?t.name:'Choose a task to begin'}</div>
+   <div class="row"><button class="btn ${S.tracking?'':'pri'}" onclick="${t?'toggleTrack()':"go('tasks')"}">${S.tracking?ic('pause',13)+' Pause':ic('play',13)+(t?' Resume':' Select Task')}</button>${t?`<button class="btn" onclick="stopTrack()">Stop</button>`:''}<button class="btn" onclick="toggleMini()">Mini Timer</button></div></div></div></div>
+  <div class="card"><h4>Weekly hours</h4><div class="bars">${days.map(d=>`<div class="b"><span class="mono" style="color:var(--text2)">${d[1]?d[1].toFixed(1):''}</span><i style="height:${d[1]/9*100}%;${d[0]==='Sat'?'':'opacity:.55'}"></i><span>${d[0]}</span></div>`).join('')}</div></div>
+ </div>
+ <div class="grid g3">
+  <div class="card"><h4>Recent sessions<span class="r"><a style="color:var(--gold2);cursor:pointer" onclick="go('history')">See all</a></span></h4>${S.history.slice(0,4).map(h=>`<div class="listi"><div class="ic" style="background:color-mix(in oklab,${projBy(taskBy(h.t).p).color} 20%,transparent);color:${projBy(taskBy(h.t).p).color}">${ic('clock')}</div><div style="flex:1;min-width:0"><div style="white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${taskBy(h.t).name}</div><div class="dim" style="font-size:11px">${h.d} · ${h.start}–${h.end}</div></div><span class="mono">${h.dur}</span></div>`).join('')}</div>
+  <div class="card"><h4>Leave balance<span class="r"><a style="color:var(--gold2);cursor:pointer" onclick="go('balance')">Details</a></span></h4><div class="grid g2" style="gap:10px">${S.balances.map(b=>`<div class="row">${ring((b.total-b.used)/b.total,48,5,b.color,`<b class="mono" style="font-size:12px">${b.total-b.used}</b>`)}<div><b>${b.k}</b><div class="dim" style="font-size:11px">of ${b.total}</div></div></div>`).join('')}</div></div>
+  <div class="card"><h4>Upcoming</h4>${[['Nov 15','Guru Nanak Jayanti','Holiday','ok'],['Nov 24','Annual leave · 5 days','Pending','wait'],['Dec 25','Christmas','Holiday','ok']].map(u=>`<div class="listi"><div style="width:42px;text-align:center"><div class="dim" style="font-size:10px">${u[0].split(' ')[0].toUpperCase()}</div><div class="mono" style="font-size:18px;font-weight:600">${u[0].split(' ')[1]}</div></div><div style="flex:1">${u[1]}</div><span class="pill ${u[3]}">${u[2]}</span></div>`).join('')}</div>
+ </div>`},
+tracker(){const t=taskBy(S.task);return `<div class="grid" style="grid-template-columns:1.3fr 1fr">
+ <div class="card" style="text-align:center;padding:34px"><div class="dim" style="font-size:11.5px">${t?projBy(t.p).name+' · '+projBy(t.p).client:'Select a task to start'}</div><div style="font-size:19px;font-weight:600;margin-top:4px">${t?t.name:'No task selected'}</div>
+  <div style="display:flex;justify-content:center;margin:24px 0">${ring(S.elapsed%3600/3600,250,14,'var(--gold)',`<div class="timer-big" id="bigT">${fmt(S.elapsed)}</div><div class="dim">${S.tracking?'<span style="color:var(--ok)">● Recording</span>':S.elapsed?'Paused':'Ready'}</div>`)}</div>
+  <div class="row" style="justify-content:center"><button class="btn ${S.tracking?'':'pri'} lg" onclick="${t?'toggleTrack()':"go('tasks')"}">${S.tracking?ic('pause',14)+' Pause':ic('play',14)+(S.elapsed?' Resume':' Start')}</button><button class="btn lg" onclick="stopTrack()" ${S.elapsed?'':'disabled'}>Stop & Save</button></div>
+  <div class="dim" style="margin-top:14px;font-size:11.5px">⌃⌥Space start/pause · ⌃⌥S stop · ⌥⌘M mini timer</div></div>
+ <div class="card"><h4>Quick switch task</h4><input class="field" placeholder="Search tasks…" oninput="document.querySelectorAll('.qs').forEach(e=>e.style.display=e.textContent.toLowerCase().includes(this.value.toLowerCase())?'':'none')" style="margin-bottom:10px">
+  ${S.tasks.map(x=>`<div class="task qs ${S.task===x.id?'sel':''}" onclick="pickTask('${x.id}')"><i style="width:8px;height:8px;border-radius:50%;background:${projBy(x.p).color}"></i><div style="flex:1;min-width:0"><div style="white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${x.name}</div><div class="dim" style="font-size:11px">${projBy(x.p).name}</div></div>${S.task===x.id?'<span style="color:var(--gold)">'+ic('check',14)+'</span>':''}</div>`).join('')}</div></div>`},
+projects(){return `<div class="grid g2">${S.projects.map(p=>{const ts=S.tasks.filter(t=>t.p===p.id);return `<div class="card"><div class="between"><div class="row"><div class="ic" style="background:color-mix(in oklab,${p.color} 22%,transparent);color:${p.color}">${ic('folder')}</div><div><b style="font-size:14px">${p.name}</b><div class="dim" style="font-size:11.5px">${p.client}</div></div></div><span class="pill gray">${ts.length} tasks</span></div>
+ <div class="between" style="margin:16px 0 6px"><span class="dim">Progress</span><span class="mono">${p.progress}%</span></div><div class="prog"><i style="width:${p.progress}%;background:${p.color}"></i></div>
+ <div class="between" style="margin-top:14px"><span class="mono">${p.hours}h <span class="dim">logged</span></span><button class="btn" onclick="go('tasks');setTimeout(()=>{$('#tp').value='${p.id}';filterTasks()},30)">View Tasks</button></div></div>`}).join('')}</div>`},
+tasks(){return `<div class="row" style="margin-bottom:14px"><input class="field" id="tq" placeholder="Search tasks…" oninput="filterTasks()" style="max-width:320px"><select class="field" id="tp" onchange="filterTasks()" style="max-width:220px"><option value="">All projects</option>${S.projects.map(p=>`<option value="${p.id}">${p.name}</option>`).join('')}</select><div class="seg" id="tpri">${['All','High','Medium','Low'].map(x=>`<button class="${x==='All'?'on':''}" onclick="this.parentNode.querySelectorAll('button').forEach(b=>b.classList.remove('on'));this.classList.add('on');filterTasks()">${x}</button>`).join('')}</div></div><div id="taskList"></div>`},
+history(){const groups={};S.history.forEach(h=>(groups[h.d]=groups[h.d]||[]).push(h));return `<div class="between" style="margin-bottom:14px"><div class="seg">${['Day','Week','Month'].map(x=>`<button class="${histRange===x?'on':''}" onclick="histRange='${x}';render()">${x}</button>`).join('')}</div><button class="btn" onclick="exportCSV()">Export CSV</button></div>
+ <div class="grid g3" style="margin-bottom:14px"><div class="card"><h4>Total</h4><div class="kpi">${histRange==='Day'?'5h 12m':histRange==='Week'?'38h 36m':'162h 10m'}</div></div><div class="card"><h4>Sessions</h4><div class="kpi">${histRange==='Day'?3:histRange==='Week'?24:96}</div></div><div class="card"><h4>Avg. session</h4><div class="kpi">1h 44m</div></div></div>
+ ${Object.entries(groups).map(([d,arr])=>`<div class="card" style="margin-bottom:12px"><h4>${d}<span class="r mono">${arr.length} sessions</span></h4><table><thead><tr><th>Task</th><th>Project</th><th>Start</th><th>End</th><th>Duration</th></tr></thead><tbody>${arr.map(h=>`<tr class="hov"><td>${taskBy(h.t).name}</td><td class="muted">${projBy(taskBy(h.t).p).name}</td><td class="mono">${h.start}</td><td class="mono">${h.end}</td><td class="mono"><b>${h.dur}</b></td></tr>`).join('')}</tbody></table></div>`).join('')}`},
+manual(){return `<div class="grid" style="grid-template-columns:1.2fr 1fr"><div class="card"><h4>New time entry</h4>
+ <label class="lbl">Task</label><select class="field" id="mt">${S.tasks.map(t=>`<option value="${t.id}">${t.name} — ${projBy(t.p).name}</option>`).join('')}</select>
+ <div class="grid g3" style="gap:10px"><div><label class="lbl">Date</label><input class="field" type="date" id="md" value="${new Date().toISOString().slice(0,10)}"></div><div><label class="lbl">Start</label><input class="field" type="time" id="ms" value="16:00"></div><div><label class="lbl">End</label><input class="field" type="time" id="me" value="17:30"></div></div>
+ <label class="lbl">Reason for manual entry</label><textarea class="field" id="mr" placeholder="e.g. Offline workshop with client"></textarea>
+ <div class="row" style="justify-content:flex-end;margin-top:14px"><button class="btn" onclick="go('history')">Cancel</button><button class="btn pri" onclick="saveManual()">Submit for Approval</button></div></div>
+ <div class="card"><h4>${ic('info',14)} Policy</h4><p class="muted" style="line-height:1.6">Manual entries up to 2 hours per day are auto-approved. Longer entries require approval from <b>Priya Sharma</b>. Entries older than 7 days cannot be added.</p></div></div>`},
+leave(){return `<div class="hero-t" style="margin-bottom:18px">Time <em>off</em>, simplified.</div>
+ <div class="grid g4" style="margin-bottom:14px">${S.balances.map(b=>`<div class="card" style="text-align:center">${'<div style="display:flex;justify-content:center">'+ring((b.total-b.used)/b.total,96,8,b.color,`<div class="mono" style="font-size:22px;font-weight:600">${b.total-b.used}</div><div class="dim" style="font-size:10px">left</div>`)+'</div>'}<b style="display:block;margin-top:10px">${b.k} Leave</b><div class="dim" style="font-size:11.5px">${b.used} used of ${b.total}</div></div>`).join('')}</div>
+ <div class="grid g2"><div class="card"><h4>Pending & recent<span class="r"><a style="color:var(--gold2);cursor:pointer" onclick="go('requests')">All requests</a></span></h4>${S.requests.slice(0,3).map(r=>`<div class="listi" onclick="S.reqSel='${r.id}';go('detail')" style="cursor:pointer"><div class="ic" style="background:rgba(213,160,74,.15);color:var(--gold)">${ic('leaf')}</div><div style="flex:1"><b>${r.type} · ${r.days} day${r.days>1?'s':''}</b><div class="dim" style="font-size:11px">${r.from}${r.from!==r.to?' – '+r.to:''}</div></div>${statusPill(r.status)}</div>`).join('')}</div>
+ <div class="card"><h4>Upcoming holidays<span class="r"><a style="color:var(--gold2);cursor:pointer" onclick="go('holidays')">Calendar</a></span></h4>${S.holidays.slice(0,4).map(h=>`<div class="listi"><div class="ic" style="background:rgba(53,201,160,.15);color:var(--ok)">${ic('sun')}</div><div style="flex:1"><b>${h.n}</b><div class="dim" style="font-size:11px">${h.d}</div></div><span class="pill ${h.t==='Company'?'vio':'ok'}">${h.t}</span></div>`).join('')}</div></div>`},
+apply(){return `<div class="grid" style="grid-template-columns:1.3fr 1fr"><div class="card"><h4>Leave request</h4>
+ <label class="lbl">Leave type</label><div class="seg" id="lt">${S.balances.map((b,i)=>`<button class="${i===0?'on':''}" onclick="this.parentNode.querySelectorAll('button').forEach(x=>x.classList.remove('on'));this.classList.add('on');calcLeave()">${b.k}</button>`).join('')}</div>
+ <div class="grid g2" style="gap:10px"><div><label class="lbl">From</label><input class="field" type="date" id="lf" value="2026-12-08" onchange="calcLeave()"></div><div><label class="lbl">To</label><input class="field" type="date" id="lto" value="2026-12-10" onchange="calcLeave()"></div></div>
+ <label class="lbl">Duration</label><div class="seg" id="ldur">${['Full day','First half','Second half'].map((x,i)=>`<button class="${i===0?'on':''}" onclick="this.parentNode.querySelectorAll('button').forEach(b=>b.classList.remove('on'));this.classList.add('on');calcLeave()">${x}</button>`).join('')}</div>
+ <label class="lbl">Reason</label><textarea class="field" id="lr" placeholder="Brief reason for your manager"></textarea>
+ <label class="lbl">Notify</label><div class="row"><span class="pill blue">Priya Sharma (Manager)</span><span class="pill gray">HR Team</span></div>
+ <div id="lerr" style="color:#ff8a84;font-size:12px;margin-top:10px"></div>
+ <div class="row" style="justify-content:flex-end;margin-top:14px"><button class="btn" onclick="go('leave')">Cancel</button><button class="btn pri" onclick="submitLeave()">Submit Request</button></div></div>
+ <div class="card"><h4>Summary</h4><div style="display:flex;justify-content:center;margin:10px 0" id="lring"></div><div id="lsum" class="muted" style="text-align:center;line-height:1.6"></div></div></div>`},
+requests(){const F=['All','Pending','Approved','Rejected','Cancelled'];const list=S.requests.filter(r=>S.filter==='All'||r.status===S.filter);
+ return `<div class="between" style="margin-bottom:14px"><div class="seg">${F.map(f=>`<button class="${S.filter===f?'on':''}" onclick="S.filter='${f}';render()">${f}</button>`).join('')}</div><button class="btn pri" onclick="go('apply')">+ New Request</button></div>
+ <div class="card" style="padding:6px">${list.length?`<table><thead><tr><th>ID</th><th>Type</th><th>Dates</th><th>Days</th><th>Applied</th><th>Status</th><th></th></tr></thead><tbody>${list.map(r=>`<tr class="hov" style="cursor:pointer" onclick="S.reqSel='${r.id}';go('detail')"><td class="mono dim">${r.id}</td><td><b>${r.type}</b></td><td>${r.from}${r.from!==r.to?' – '+r.to:''}</td><td class="mono">${r.days}</td><td class="muted">${r.applied}</td><td>${statusPill(r.status)}</td><td class="dim">›</td></tr>`).join('')}</tbody></table>`:'<div class="empty">No requests in this category.</div>'}</div>`},
+detail(){const r=S.requests.find(x=>x.id===S.reqSel);$('#vSub').textContent=r.id;return `<div class="row" style="margin-bottom:14px"><button class="btn" onclick="go('requests')">‹ My Requests</button></div>
+ <div class="grid" style="grid-template-columns:1.3fr 1fr"><div class="card"><div class="between"><div><div class="dim mono">${r.id}</div><div class="hero-t" style="font-size:30px;margin-top:4px">${r.type} leave</div></div>${statusPill(r.status)}</div>
+ <div class="grid g3" style="margin-top:18px"><div><div class="dim" style="font-size:11px">From</div><b>${r.from}, 2026</b></div><div><div class="dim" style="font-size:11px">To</div><b>${r.to}, 2026</b></div><div><div class="dim" style="font-size:11px">Duration</div><b>${r.days} working day${r.days>1?'s':''}</b></div></div>
+ <div style="margin-top:16px"><div class="dim" style="font-size:11px">Reason</div><p style="margin-top:4px">${r.reason}</p></div>
+ ${r.status==='Pending'?`<div class="row" style="margin-top:20px"><button class="btn dan" onclick="cancelReq('${r.id}')">Withdraw Request</button><button class="btn" onclick="notify('Reminder sent','Priya Sharma was nudged about ${r.id}.')">Send Reminder</button></div>`:''}</div>
+ <div class="card"><h4>Approval history</h4><div class="tl">
+  <div class="t"><b>Submitted</b><div class="dim" style="font-size:11.5px">${r.applied} · by you</div></div>
+  <div class="t ${r.status==='Pending'?'':r.status==='Approved'?'ok':'no'}"><b>${r.status==='Pending'?'Awaiting Priya Sharma':r.status==='Cancelled'?'Withdrawn by you':r.status+' by Priya Sharma'}</b><div class="dim" style="font-size:11.5px">${r.status==='Pending'?'Manager · usually responds within 1 day':r.status==='Rejected'?'“Overlaps with release week — please pick another date.”':r.status==='Approved'?'“Enjoy! Hand over QA to Rohan.”':''}</div></div>
+  ${r.status==='Approved'?'<div class="t ok"><b>Recorded by HR</b><div class="dim" style="font-size:11.5px">Balance updated</div></div>':''}</div>
+  <label class="lbl">Add a comment</label><div class="row"><input class="field" id="cmt" placeholder="Write a comment…"><button class="btn" onclick="if($('#cmt').value){notify('Comment posted','Your comment was added to ${r.id}.');$('#cmt').value=''}">Post</button></div></div></div>`},
+calendar(){return calView(true)},
+holidays(){return `<div class="grid" style="grid-template-columns:1fr 1.4fr"><div class="card"><h4>2026–27 holidays</h4>${S.holidays.map(h=>`<div class="listi"><div style="width:46px;text-align:center"><div class="dim" style="font-size:10px">${h.d.split(' ')[0].toUpperCase()}</div><div class="mono" style="font-size:20px;font-weight:600">${h.d.split(' ')[1]}</div></div><div style="flex:1"><b>${h.n}</b></div><span class="pill ${h.t==='Company'?'vio':h.t==='Regional'?'blue':'ok'}">${h.t}</span></div>`).join('')}</div><div>${calView(false)}</div></div>`},
+balance(){return `<div class="card" style="padding:6px;margin-bottom:14px"><table><thead><tr><th>Leave type</th><th>Entitled</th><th>Used</th><th>Pending</th><th>Available</th><th style="width:30%">Utilisation</th></tr></thead><tbody>${S.balances.map(b=>{const pend=S.requests.filter(r=>r.type===b.k&&r.status==='Pending').reduce((a,r)=>a+r.days,0);return `<tr><td><span style="display:inline-block;width:8px;height:8px;border-radius:50%;background:${b.color};margin-right:8px"></span><b>${b.k}</b></td><td class="mono">${b.total}</td><td class="mono">${b.used}</td><td class="mono">${pend}</td><td class="mono"><b>${b.total-b.used}</b></td><td><div class="prog"><i style="width:${b.used/b.total*100}%;background:${b.color}"></i></div></td></tr>`}).join('')}</tbody></table></div>
+ <div class="grid g2"><div class="card"><h4>Accrual this year</h4><div class="bars">${['Apr','May','Jun','Jul','Aug','Sep','Oct','Nov'].map((m,i)=>`<div class="b"><i style="height:${30+i*8}%;background:linear-gradient(180deg,#7fb0ff,var(--blue))"></i><span>${m}</span></div>`).join('')}</div></div><div class="card"><h4>Policy notes</h4><p class="muted" style="line-height:1.7">• Annual leave accrues 1.5 days/month.<br>• Up to 5 unused annual days carry forward.<br>• Sick leave beyond 2 days needs a medical note.<br>• Comp-off expires 60 days after it’s earned.</p></div></div>`},
+team(){return `<div class="grid g3" style="margin-bottom:14px"><div class="card"><h4>Working now</h4><div class="kpi">2<small> / 6</small></div></div><div class="card"><h4>On leave today</h4><div class="kpi">1</div></div><div class="card"><h4>Team hours today</h4><div class="kpi">19h 47m</div></div></div>
+ <div class="grid g3">${S.team.map((m,i)=>`<div class="card" style="cursor:pointer" onclick="memberSel=${i};go('member')"><div class="row"><div class="avatar" style="width:42px;height:42px;background:${m.c}">${m.init}</div><div style="flex:1"><b>${m.n}</b><div class="dim" style="font-size:11.5px">${m.r}</div></div></div><div class="between" style="margin-top:14px"><span class="pill ${m.s==='Working'?'ok':m.s==='On leave'?'vio':m.s==='Idle'?'wait':m.s==='Offline'?'gray':'blue'}">● ${m.s}</span><span class="mono">${m.h}</span></div></div>`).join('')}</div>`},
+member(){const m=S.team[memberSel];$('#vSub').textContent=m.n;return `<div class="row" style="margin-bottom:14px"><button class="btn" onclick="go('team')">‹ Team</button></div><div class="card" style="margin-bottom:14px"><div class="row" style="gap:18px"><div class="avatar" style="width:70px;height:70px;font-size:22px;background:${m.c}">${m.init}</div><div><div class="hero-t" style="font-size:30px">${m.n}</div><div class="muted">${m.r} · Bengaluru · 09:30–18:30 IST</div></div><span style="flex:1"></span><span class="pill ok">● ${m.s}</span></div></div>
+ <div class="grid g3"><div class="card"><h4>This week</h4><div class="kpi">36h 20m</div></div><div class="card"><h4>Productivity</h4><div class="kpi">82%</div></div><div class="card"><h4>Leave left</h4><div class="kpi">14 days</div></div></div>`},
+approvals(){return `<div class="card" style="margin-bottom:12px;background:rgba(213,160,74,.08)"><span class="dim">Manager view — visible only to approvers.</span></div><div id="apprList">${appr.map((a,i)=>`<div class="card" style="margin-bottom:10px"><div class="row"><div class="avatar" style="background:${a.c}">${a.init}</div><div style="flex:1"><b>${a.n}</b> · ${a.t}<div class="dim" style="font-size:11.5px">${a.d} · “${a.r}”</div></div>${a.s?statusPill(a.s):`<button class="btn dan" onclick="decide(${i},'Rejected')">Reject</button><button class="btn pri" onclick="decide(${i},'Approved')">Approve</button>`}</div></div>`).join('')}</div>`},
+reports(){const tabs=['Productivity','Time','Attendance','Leave'];return `<div class="between" style="margin-bottom:14px"><div class="seg">${tabs.map(t=>`<button class="${repTab===t?'on':''}" onclick="repTab='${t}';render()">${t}</button>`).join('')}</div><button class="btn" onclick="notify('Report exported','EffiLens-${repTab}-Report.pdf saved to Downloads.')">Export PDF</button></div>${rep()}`},
+notifications(){return `<div class="between" style="margin-bottom:14px"><span class="muted">${S.notifs.filter(n=>!n.read).length} unread</span><div class="row"><button class="btn" onclick="S.notifs.forEach(n=>n.read=true);render()">Mark all read</button><button class="btn" onclick="setTab='notif';go('settings')">Preferences</button></div></div>
+ <div class="card" style="padding:4px 14px">${S.notifs.map((n,i)=>`<div class="listi" style="cursor:pointer" onclick="S.notifs[${i}].read=true;render()"><div class="ic" style="background:color-mix(in oklab,${n.k==='ok'?'var(--ok)':n.k==='blue'?'var(--blue)':n.k==='vio'?'var(--violet)':'var(--gold)'} 18%,transparent);color:${n.k==='ok'?'var(--ok)':n.k==='blue'?'var(--blue)':n.k==='vio'?'var(--violet)':'var(--gold)'}">${ic('bell')}</div><div style="flex:1"><b style="${n.read?'font-weight:500;color:var(--text2)':''}">${n.t}</b><div class="dim" style="font-size:12px">${n.b}</div></div><span class="dim" style="font-size:11px">${n.w}</span>${n.read?'':'<i style="width:8px;height:8px;border-radius:50%;background:var(--blue)"></i>'}</div>`).join('')}</div>
+ <div class="card" style="margin-top:14px"><h4>Preview native notifications</h4><div class="row" style="flex-wrap:wrap">${[['Tracking started','Now tracking “macOS menu bar extra”.'],['Break reminder','You’ve been focused for 90 minutes.'],['Idle detected','You’ve been idle for 5 minutes. Keep or discard?'],['Leave approved','Annual leave Nov 24–28 approved 🎉'],['Leave rejected','Request LR-1950 was declined.'],['Backend disconnected','Working offline — will sync later.'],['Sync completed','All sessions are up to date.']].map(n=>`<button class="btn" onclick="notify('${n[0]}','${n[1]}')">${n[0]}</button>`).join('')}</div></div>`},
+activity(){return `<div class="card"><div class="tl">${[['18:10','Synced 3 sessions','ok'],['15:31','Stopped tracking “Leave calendar SwiftUI grid” (1:29)',''],['14:02','Started tracking “Leave calendar SwiftUI grid”',''],['13:10','Idle time 4m excluded','no'],['11:55','Switched to “Pipeline kanban interactions”',''],['10:20','Leave request LR-2041 viewed by Priya','ok'],['09:12','Started tracking “macOS menu bar extra & popover”',''],['09:10','Signed in on Aarav’s MacBook Pro','ok']].map(a=>`<div class="t ${a[2]}"><span class="mono dim" style="font-size:11px">${a[0]}</span><div>${a[1]}</div></div>`).join('')}</div></div>`},
+settings(){const tabs=[['general','gear','General'],['tracking','clock','Tracking'],['shots','screen','Screenshots'],['notif','bell','Notifications'],['appear','sun','Appearance'],['account','user','Account']];
+ return `<div class="row" style="justify-content:center;gap:4px;margin-bottom:20px">${tabs.map(t=>`<button onclick="setTab='${t[0]}';render()" style="display:flex;flex-direction:column;align-items:center;gap:4px;padding:8px 14px;border-radius:9px;${setTab===t[0]?'background:rgba(213,160,74,.18);color:var(--gold2)':'color:var(--text2)'}">${ic(t[1],20)}<span style="font-size:11.5px">${t[2]}</span></button>`).join('')}</div><div style="max-width:640px;margin:0 auto">${setPane()}</div>`},
+about(){return `<div style="max-width:680px;margin:0 auto"><div class="card" style="text-align:center;padding:30px"><div style="display:flex;justify-content:center"><div class="appicon"></div></div><div class="hero-t" style="margin-top:16px">EffiLens</div><div class="muted">Version 3.0.2 (Build 2611) · Universal</div><div class="row" style="justify-content:center;margin-top:16px"><button class="btn" onclick="showUpdate()">Check for Updates</button><button class="btn" onclick="notify('Logs exported','effilens-diagnostics.zip saved to Desktop.')">Export Logs</button></div></div>
+ <div class="set-title" style="margin-top:18px">Health</div><div class="set-group">${[['Tracking agent','Running · PID 4821','ok'],['Backend connectivity',S.offline?'Unreachable':'api.lumenlabs.effilens.io · 42 ms',S.offline?'no':'ok'],['Sync queue',S.offline?'3 pending':'0 pending',S.offline?'wait':'ok'],['Accessibility permission','Granted','ok'],['Screen Recording permission',perms.screen?'Granted':'Not granted',perms.screen?'ok':'wait'],['Last sync','Today, 18:10','gray']].map(r=>`<div class="set-row"><span>${r[0]}</span><span class="pill ${r[2]}">${r[1]}</span></div>`).join('')}</div>
+ <div class="set-title">Simulate system states</div><div class="set-group"><div class="set-row"><span>Offline mode</span><div class="tog ${S.offline?'on':''}" onclick="toggleOffline()"></div></div><div class="set-row"><span>Session recovery</span><button class="btn" onclick="showRecovery()">Show</button></div><div class="set-row"><span>API error</span><button class="btn" onclick="showError()">Show</button></div><div class="set-row"><span>Quit confirmation</span><button class="btn" onclick="askQuit()">Show</button></div><div class="set-row"><span>Reinstall (restart prototype)</span><button class="btn" onclick="location.reload()">Restart</button></div></div></div>`},
+};
+let memberSel=0;
+const appr=[{n:'Rohan Kapoor',init:'RK',c:'#35C9A0',t:'Annual leave · 3 days',d:'Dec 2 – Dec 4',r:'Sister’s wedding'},{n:'Kabir Singh',init:'KS',c:'#F0C779',t:'Sick leave · 1 day',d:'Nov 3',r:'Dental procedure'}];
+function decide(i,s){appr[i].s=s;render();notify(`Leave ${s.toLowerCase()}`,`${appr[i].n}’s request was ${s.toLowerCase()}.`)}
+function calView(full){const y=2026,m=S.calMonth,first=new Date(y,m,1).getDay(),dim=new Date(y,m+1,0).getDate(),name=new Date(y,m,1).toLocaleString('en-US',{month:'long'});
+ const ev={10:{1:[['hol','Rajyotsava']],15:[['hol','Guru Nanak J.']],3:[['sick','Kabir · Sick']],5:[['team','Neha · Annual']],6:[['team','Neha · Annual']],7:[['team','Neha · Annual']],18:[['team','Ananya · WFH']],24:[['me','You · Annual']],25:[['me','You · Annual']],26:[['me','You · Annual']],27:[['me','You · Annual']],28:[['me','You · Annual']]},11:{2:[['team','Rohan · Annual']],3:[['team','Rohan · Annual']],4:[['team','Rohan · Annual']],8:[['me','You · Draft']],25:[['hol','Christmas']],31:[['hol','Company Day']]}}[m]||{};
+ let cells='';for(let i=0;i<first;i++)cells+=`<div class="d x"></div>`;for(let d=1;d<=dim;d++){const wd=(first+d-1)%7;cells+=`<div class="d ${wd===0||wd===6?'we':''} ${m===10&&d===1?'today':''}"><span class="${m===10&&d===1?'mono':'mono dim'}">${d}</span>${(ev[d]||[]).filter(e=>full||e[0]==='hol').map(e=>`<span class="ev ${e[0]}">${e[1]}</span>`).join('')}</div>`}
+ return `<div class="card"><div class="between" style="margin-bottom:12px"><div class="hero-t" style="font-size:28px">${name} <span class="dim">${y}</span></div><div class="row"><button class="btn" onclick="S.calMonth=Math.max(9,S.calMonth-1);render()">‹</button><button class="btn" onclick="S.calMonth=10;render()">Today</button><button class="btn" onclick="S.calMonth=Math.min(11,S.calMonth+1);render()">›</button></div></div>
+ ${full?'<div class="row" style="margin-bottom:10px"><span class="ev me">● You</span><span class="ev team">● Team</span><span class="ev sick">● Sick</span><span class="ev hol">● Holiday</span></div>':''}
+ <div class="cal">${['Sun','Mon','Tue','Wed','Thu','Fri','Sat'].map(d=>`<div class="h">${d}</div>`).join('')}${cells}</div></div>`}
+function rep(){if(repTab==='Productivity')return `<div class="grid g4" style="margin-bottom:14px">${[['Focus score','87%'],['Active time','34h 10m'],['Idle time','2h 05m'],['Top app','Xcode']].map(k=>`<div class="card"><h4>${k[0]}</h4><div class="kpi">${k[1]}</div></div>`).join('')}</div><div class="grid g2"><div class="card"><h4>Daily productivity</h4><div class="bars">${[82,88,76,91,85,87,0].map((v,i)=>`<div class="b"><span class="mono" style="color:var(--text2)">${v||''}</span><i style="height:${v}%;background:linear-gradient(180deg,#c3a6ff,var(--violet))"></i><span>${'MTWTFSS'[i]}</span></div>`).join('')}</div></div><div class="card"><h4>App usage</h4>${[['Xcode',38,'var(--blue)'],['Figma',27,'var(--violet)'],['Safari',14,'var(--ok)'],['Slack',11,'var(--gold)'],['Other',10,'var(--text3)']].map(a=>`<div style="margin:9px 0"><div class="between"><span>${a[0]}</span><span class="mono">${a[1]}%</span></div><div class="prog" style="margin-top:5px"><i style="width:${a[1]}%;background:${a[2]}"></i></div></div>`).join('')}</div></div>`;
+ if(repTab==='Time')return `<div class="card" style="padding:6px"><table><thead><tr><th>Project</th><th>Tasks</th><th>This week</th><th>This month</th><th style="width:30%">Share</th></tr></thead><tbody>${S.projects.map((p,i)=>`<tr><td><b>${p.name}</b></td><td class="mono">${S.tasks.filter(t=>t.p===p.id).length}</td><td class="mono">${[12.5,14.2,6.1,5.8][i]}h</td><td class="mono">${[48,61,22,31][i]}h</td><td><div class="prog"><i style="width:${[30,38,14,18][i]}%;background:${p.color}"></i></div></td></tr>`).join('')}</tbody></table></div>`;
+ if(repTab==='Attendance')return `<div class="grid g4" style="margin-bottom:14px">${[['Workdays','21 / 22'],['Avg. start','09:18'],['Avg. hours','8h 04m'],['Late starts','2']].map(k=>`<div class="card"><h4>${k[0]}</h4><div class="kpi">${k[1]}</div></div>`).join('')}</div><div class="card"><h4>October heat-map</h4><div style="display:grid;grid-template-columns:repeat(31,1fr);gap:4px">${Array.from({length:31},(_,i)=>`<div title="Oct ${i+1}" style="aspect-ratio:1;border-radius:4px;background:rgba(213,160,74,${[0,6].includes((i+3)%7)?.06:.25+Math.abs(Math.sin(i))*.7})"></div>`).join('')}</div></div>`;
+ return `<div class="grid g2"><div class="card"><h4>Utilisation by type</h4>${S.balances.map(b=>`<div style="margin:10px 0"><div class="between"><span>${b.k}</span><span class="mono">${b.used}/${b.total}</span></div><div class="prog" style="margin-top:5px"><i style="width:${b.used/b.total*100}%;background:${b.color}"></i></div></div>`).join('')}</div><div class="card"><h4>Absence trend (days)</h4><div class="bars">${[1,0,2,3,1,2,1,5].map((v,i)=>`<div class="b"><i style="height:${v*18}%;background:linear-gradient(180deg,#6fe0c0,var(--ok))"></i><span>${['Apr','May','Jun','Jul','Aug','Sep','Oct','Nov'][i]}</span></div>`).join('')}</div></div></div>`}
+function setPane(){const st=S.settings,T=(k,l,d)=>`<div class="set-row"><div><div>${l}</div>${d?`<div class="dim" style="font-size:11.5px">${d}</div>`:''}</div><div class="tog ${st[k]?'on':''}" onclick="S.settings.${k}=!S.settings.${k};this.classList.toggle('on')"></div></div>`;
+ if(setTab==='general')return `<div class="set-group">${T('launch','Open at login','Start the tracking agent when you log in')}${T('menubar','Show in menu bar')}${T('dock','Show Dock badge for unread')}${T('mini','Show mini timer when tracking')}</div><div class="set-group"><div class="set-row"><span>Language</span><select class="field" style="width:180px"><option>English (UK)</option><option>English (US)</option><option>हिन्दी</option></select></div><div class="set-row"><span>Week starts on</span><div class="seg"><button class="on">Monday</button><button>Sunday</button></div></div></div>`;
+ if(setTab==='tracking')return `<div class="set-group">${T('idle','Detect idle time','Pause after 5 minutes of inactivity')}${T('apps','Track active applications')}${T('breaks','Break reminders','Every 90 minutes')}</div><div class="set-group"><div class="set-row"><span>Idle threshold</span><input type="range" min="1" max="15" value="5" style="accent-color:var(--gold)"></div><div class="set-row"><span>Global shortcut</span><span class="mono pill gray">⌃⌥Space</span></div></div>`;
+ if(setTab==='shots')return `<div class="set-group">${T('shots','Capture screenshots','Controlled by your organisation policy')}${T('blur','Blur screenshots')}<div class="set-row"><span>Frequency</span><div class="seg">${['5 min','10 min','30 min'].map(x=>`<button class="${st.freq===x?'on':''}" onclick="S.settings.freq='${x}';render()">${x}</button>`).join('')}</div></div><div class="set-row"><span>Retention</span><select class="field" style="width:140px"><option>30 days</option><option>60 days</option><option>90 days</option></select></div></div><p class="dim" style="font-size:11.5px">You can review and delete screenshots within 24 hours.</p>`;
+ if(setTab==='notif')return `<div class="set-group">${T('sound','Play sounds')}${T('breaks','Break reminders')}${T('leaveN','Leave status updates')}${T('idle','Idle alerts')}</div><div class="set-group"><div class="set-row"><span>Alert style</span><div class="seg"><button class="on">Banners</button><button>Alerts</button><button>None</button></div></div><div class="set-row"><span>Test</span><button class="btn" onclick="notify('Test notification','Notifications are working perfectly.')">Send Test</button></div></div>`;
+ if(setTab==='appear')return `<div class="set-group"><div class="set-row"><span>Appearance</span><div class="seg"><button class="${document.body.classList.contains('light')?'':'on'}" onclick="document.body.classList.remove('light');render()">Dark</button><button class="${document.body.classList.contains('light')?'on':''}" onclick="document.body.classList.add('light');render()">Light</button><button onclick="document.body.classList.toggle('light',matchMedia('(prefers-color-scheme: light)').matches);render()">Auto</button></div></div><div class="set-row"><span>Accent colour</span><div class="row">${['#D5A04A','#4D91FF','#35C9A0','#A17BEE','#FF8A84'].map(c=>`<button class="swatch ${st.accent===c?'on':''}" style="background:${c}" onclick="setAccent('${c}')"></button>`).join('')}</div></div></div>`;
+ return `<div class="card" style="margin-bottom:16px"><div class="row" style="gap:16px"><div class="avatar" style="width:60px;height:60px;font-size:20px">${S.user.init}</div><div><b style="font-size:16px">${S.user.name}</b><div class="muted">${S.user.role}</div><div class="dim" style="font-size:11.5px">${S.user.email}</div></div></div></div><div class="set-group"><div class="set-row"><span>Organisation</span><span class="muted">${S.user.org}</span></div><div class="set-row"><span>Manager</span><span class="muted">Priya Sharma</span></div><div class="set-row"><span>Device</span><span class="muted">Aarav’s MacBook Pro</span></div></div><button class="btn dan" onclick="signOut()">Sign Out</button>`}
+function setAccent(c){S.settings.accent=c;document.documentElement.style.setProperty('--gold',c);document.documentElement.style.setProperty('--accent',c);render()}
+function signOut(){stopTrack(true);S.onboarded=false;hideW('app');hideW('mini');$('#mbExtra').style.display='none';show('onboard');obStep=0;renderOb()}
+
+/* ============ AFTER-RENDER hooks ============ */
+const after={tasks:filterTasks,apply:calcLeave};
+function filterTasks(){const q=($('#tq')?.value||'').toLowerCase(),p=$('#tp')?.value||'',pr=$('#tpri .on')?.textContent||'All';const L=S.tasks.filter(t=>t.name.toLowerCase().includes(q)&&(!p||t.p===p)&&(pr==='All'||t.pri===pr));
+ $('#taskList').innerHTML=L.length?L.map(t=>`<div class="task ${S.task===t.id?'sel':''}"><i style="width:4px;align-self:stretch;border-radius:2px;background:${projBy(t.p).color}"></i><div style="flex:1;min-width:0"><b>${t.name}</b><div class="dim" style="font-size:11.5px">${projBy(t.p).name} · Due ${t.due}</div><div class="prog" style="margin-top:8px;max-width:260px"><i style="width:${t.done/t.est*100}%;background:${projBy(t.p).color}"></i></div></div><span class="pill ${t.pri==='High'?'no':t.pri==='Medium'?'wait':'gray'}">${t.pri}</span><span class="mono dim">${t.done}/${t.est}h</span><button class="btn ${S.task===t.id&&S.tracking?'':'pri'}" onclick="pickTask('${t.id}',true)">${S.task===t.id&&S.tracking?'Tracking…':ic('play',12)+' Start'}</button></div>`).join(''):'<div class="empty">No tasks match your filters.</div>'}
+function workdays(a,b){let n=0;for(let d=new Date(a);d<=b;d.setDate(d.getDate()+1)){const w=d.getDay();if(w&&w<6)n++}return n}
+function calcLeave(){const f=new Date($('#lf').value),t=new Date($('#lto').value),type=$('#lt .on').textContent,half=$('#ldur .on').textContent!=='Full day';const b=S.balances.find(x=>x.k===type);let days=isNaN(f)||isNaN(t)||t<f?0:workdays(f,t);if(half&&days)days=.5;
+ const left=b.total-b.used;$('#lring').innerHTML=ring(days/Math.max(left,1),130,10,b.color,`<div class="mono" style="font-size:26px;font-weight:600">${days}</div><div class="dim" style="font-size:10.5px">day${days===1?'':'s'}</div>`);
+ $('#lsum').innerHTML=`<b>${type} leave</b><br>${left} available → <b style="color:${days>left?'#ff8a84':'var(--ok)'}">${left-days} after this request</b><br><span class="dim" style="font-size:11.5px">Weekends & holidays excluded</span>`;return {days,left,type}}
+function submitLeave(){const {days,left,type}=calcLeave();const r=$('#lr').value.trim();if(!days){$('#lerr').textContent='Choose a valid date range.';return}if(days>left){$('#lerr').textContent=`Not enough ${type} leave balance.`;return}if(r.length<3){$('#lerr').textContent='Please add a short reason.';return}
+ const fd=d=>new Date(d).toLocaleDateString('en-US',{month:'short',day:'numeric'});const id='LR-'+(2042+Math.floor(Math.random()*50));S.requests.unshift({id,type,from:fd($('#lf').value),to:fd($('#lto').value),days,status:'Pending',reason:r,applied:'Today'});
+ notify('Leave request submitted',`${id} sent to Priya Sharma for approval.`);S.reqSel=id;go('detail');
+ setTimeout(()=>{const q=S.requests.find(x=>x.id===id);if(q&&q.status==='Pending'){q.status='Approved';S.balances.find(b=>b.k===type).used+=days;S.notifs.unshift({t:'Leave approved',b:`${id} (${type}, ${days} day${days>1?'s':''}) was approved.`,w:'now',k:'ok',read:false});notify('Leave approved 🎉',`Priya approved ${id}.`);render()}},9000)}
+function cancelReq(id){dialog(`<div style="font-size:34px">🗓️</div><h3>Withdraw ${id}?</h3><p>Your manager will be notified and the days returned to your balance.</p><div class="acts"><button class="btn dan" onclick="S.requests.find(r=>r.id==='${id}').status='Cancelled';closeDialog();render();notify('Request withdrawn','${id} has been cancelled.')">Withdraw</button><button class="btn" onclick="closeDialog()">Keep Request</button></div>`)}
+function saveManual(){const t=$('#mt').value,s=$('#ms').value,e=$('#me').value,r=$('#mr').value.trim();const [sh,sm]=s.split(':').map(Number),[eh,em]=e.split(':').map(Number),mins=(eh*60+em)-(sh*60+sm);if(mins<=0){notify('Invalid time range','End time must be after start time.');return}if(!r){notify('Reason required','Add a reason for the manual entry.');return}
+ S.history.unshift({d:'Today',t,start:s,end:e,dur:`${Math.floor(mins/60)}:${String(mins%60).padStart(2,'0')}`});notify(mins<=120?'Entry added':'Sent for approval',mins<=120?'Manual entry auto-approved.':'Priya Sharma will review your entry.');go('history')}
+function exportCSV(){const csv='Date,Task,Start,End,Duration\n'+S.history.map(h=>[h.d,taskBy(h.t).name,h.start,h.end,h.dur].join(',')).join('\n');const a=document.createElement('a');a.href=URL.createObjectURL(new Blob([csv],{type:'text/csv'}));a.download='effilens-history.csv';a.click();notify('Exported','effilens-history.csv downloaded.')}
+
+/* ============ TRACKING ENGINE ============ */
+let tickT=null;
+function pickTask(id,start){if(S.task!==id&&S.elapsed>0)saveSession();S.task=id;if(start)startTrack();else render();updateMini()}
+function startTrack(){if(!S.task){go('tasks');notify('Pick a task first','Choose an assigned task to start tracking.');return}if(S.tracking)return;S.tracking=true;$('#mbExtra').classList.add('on');$('#mbExtra').style.display='';
+ tickT=setInterval(tick,1000);notify('Tracking started',`Now tracking “${taskBy(S.task).name}”.`);if(S.settings.mini&&$('#mini').classList.contains('hide'))toggleMini();render();updateMini()}
+function toggleTrack(){if(S.tracking){S.tracking=false;clearInterval(tickT);$('#mbExtra').classList.remove('on');notify('Tracking paused',`${fmt(S.elapsed)} on “${taskBy(S.task).name}”.`);render();updateMini();renderPopover()}else startTrack()}
+function saveSession(){if(S.elapsed<1)return;const now=new Date(),st=new Date(now-S.elapsed*1000),f=d=>d.toTimeString().slice(0,5);S.history.unshift({d:'Today',t:S.task,start:f(st),end:f(now),dur:`${Math.floor(S.elapsed/3600)}:${String(Math.floor(S.elapsed%3600/60)).padStart(2,'0')}`});S.todayBase+=S.elapsed;S.elapsed=0}
+function stopTrack(silent){if(!S.task&&!S.elapsed)return;const e=S.elapsed;S.tracking=false;clearInterval(tickT);$('#mbExtra').classList.remove('on');saveSession();if(!silent&&e)notify('Session saved',`${fmt(e)} logged to “${taskBy(S.task).name}”.`);if(S.onboarded)render();updateMini();renderPopover()}
+function tick(){S.elapsed++;const f=fmt(S.elapsed);$('#mbTime').textContent=f;['#bigT','#dRing'].forEach(s=>{const e=$(s);if(e)e.textContent=f});const dt=$('#dToday');if(dt)dt.textContent=fmtHM(S.todayBase+S.elapsed);updateMini();if($('#popover').classList.contains('show'))$('#popTime').textContent=f;
+ if(S.elapsed===20&&S.settings.breaks)notify('Break reminder','Demo: you’ve been focused a while — stretch for a minute.')}
+function toggleMini(){if(!S.onboarded)return;const m=$('#mini');if(m.classList.contains('hide')){show('mini');updateMini()}else hideW('mini')}
+function updateMini(){$('#mbTime').textContent=fmt(S.elapsed);$('#miniTime').textContent=fmt(S.elapsed);$('#miniTask').textContent=S.task?taskBy(S.task).name:'No task selected';$('#miniPlay').innerHTML=ic(S.tracking?'pause':'play',17);$('#miniRing').innerHTML=ring(S.elapsed%60/60,40,4,S.tracking?'var(--ok)':'var(--gold)','')}
+// drag mini timer
+(()=>{let sx,sy,ox,oy,d=false;const m=$('#mini');$('#miniDrag').addEventListener('mousedown',e=>{if(e.target.closest('button'))return;d=true;const r=m.getBoundingClientRect();sx=e.clientX;sy=e.clientY;ox=r.left;oy=r.top;m.style.right='auto';m.style.bottom='auto';m.style.left=ox+'px';m.style.top=oy+'px'});document.addEventListener('mousemove',e=>{if(!d)return;m.style.left=ox+e.clientX-sx+'px';m.style.top=oy+e.clientY-sy+'px'});document.addEventListener('mouseup',()=>d=false)})();
+function togglePopover(e){e.stopPropagation();const p=$('#popover');p.classList.toggle('show');const r=$('#mbExtra').getBoundingClientRect();p.style.right=(innerWidth-r.right-60)+'px';renderPopover()}
+function renderPopover(){const p=$('#popover');if(!p.classList.contains('show'))return;const t=taskBy(S.task);
+ p.innerHTML=`<div class="between"><div class="row"><div class="appicon xs"></div><b>EffiLens</b></div><span class="${S.offline?'pill no':'pill ok'}">${S.offline?'Offline':'Connected'}</span></div>
+ <div class="card" style="margin-top:12px;text-align:center;padding:18px"><div class="mono" style="font-size:34px;font-weight:600" id="popTime">${fmt(S.elapsed)}</div><div class="dim" style="font-size:11.5px;margin-top:2px">${t?t.name:'No task selected'}</div>
+ <div class="row" style="justify-content:center;margin-top:12px"><button class="btn ${S.tracking?'':'pri'}" onclick="toggleTrack();renderPopover()">${S.tracking?ic('pause',12)+' Pause':ic('play',12)+' Start'}</button><button class="btn" onclick="stopTrack()">Stop</button></div></div>
+ <div class="grid g2" style="margin-top:10px;gap:8px"><div class="card" style="padding:10px"><div class="dim" style="font-size:10.5px">Today</div><b class="mono">${fmtHM(S.todayBase+S.elapsed)}</b></div><div class="card" style="padding:10px"><div class="dim" style="font-size:10.5px">Leave left</div><b class="mono">${S.balances.reduce((a,b)=>a+b.total-b.used,0)} days</b></div></div>
+ <div class="dim" style="font-size:11px;margin:12px 0 4px">Recent tasks</div>${S.tasks.slice(0,3).map(x=>`<div class="sb-i" style="font-weight:400" onclick="pickTask('${x.id}',true);renderPopover()"><i style="width:7px;height:7px;border-radius:50%;background:${projBy(x.p).color}"></i>${x.name}</div>`).join('')}
+ <hr style="border:0;border-top:1px solid var(--line);margin:8px 0"><div class="sb-i" style="font-weight:400" onclick="go('dashboard')">Open Dashboard…</div><div class="sb-i" style="font-weight:400" onclick="go('apply')">Apply for Leave…</div><div class="sb-i" style="font-weight:400" onclick="toggleMini()">Toggle Mini Timer</div><div class="sb-i" style="font-weight:400" onclick="askQuit()">Quit EffiLens</div>`}
+function toggleOffline(){S.offline=!S.offline;document.body.classList.toggle('offline',S.offline);const s=$('#syncPill');s.classList.toggle('off',S.offline);s.querySelector('span').textContent=S.offline?'Offline · 3 pending':'Synced · just now';
+ if(S.offline)notify('Backend disconnected','Working offline — sessions are saved locally.');else{s.querySelector('span').textContent='Syncing…';setTimeout(()=>{s.querySelector('span').textContent='Synced · just now';notify('Sync completed','3 sessions synchronised.')},1500)}if(S.onboarded)render()}
+function toggleTheme(){document.body.classList.toggle('light');if(S.onboarded)render()}
+// keyboard shortcuts
+document.addEventListener('keydown',e=>{if(!S.onboarded)return;if(e.ctrlKey&&e.altKey&&e.code==='Space'){e.preventDefault();toggleTrack()}if(e.ctrlKey&&e.altKey&&e.code==='KeyS'){e.preventDefault();stopTrack()}if(e.altKey&&e.metaKey&&e.code==='KeyM'){e.preventDefault();toggleMini()}if(e.metaKey&&e.key===','){e.preventDefault();go('settings')}if(e.key==='Escape')closeDialog()});
+$('#scrim').addEventListener('click',e=>{if(e.target.id==='scrim')closeDialog()});
+updateMini();
+</script>
+</body>
+</html>

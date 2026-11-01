@@ -14,6 +14,23 @@ final class SignInViewModel {
         !isSubmitting && email.contains("@") && !password.isEmpty
     }
 
+    private(set) var resetMessage: String?
+
+    func requestReset(model: AppModel) async {
+        guard email.contains("@"), let environment = model.environment else {
+            error = .validation("Enter your work email first.")
+            return
+        }
+        do {
+            let response = try await environment.profile.forgotPassword(email: email.trimmingCharacters(in: .whitespaces))
+            resetMessage = response.message
+        } catch let appError as AppError {
+            error = appError
+        } catch {
+            self.error = .unknown("forgot-password")
+        }
+    }
+
     func prefill(from session: SessionManager) async {
         if email.isEmpty, let last = await session.lastEmail { email = last }
     }
@@ -37,8 +54,9 @@ final class SignInViewModel {
     }
 }
 
-/// Sign-in step of onboarding. Layout follows the prototype's onboarding
-/// window (brand panel left, form right); identity uses official brand assets.
+/// Onboarding step 0 (prototype `obStep===0`): app icon + name, 34 pt
+/// "Welcome back." heading, labelled 30 pt fields, large primary Sign In,
+/// SSO button, error line, dots and the API host with connection state.
 struct SignInView: View {
     @Environment(AppModel.self) private var model
     @State private var viewModel = SignInViewModel()
@@ -47,106 +65,88 @@ struct SignInView: View {
     private enum Field { case email, password }
 
     var body: some View {
-        HStack(spacing: 0) {
-            brandPanel
-                .frame(width: 340)
-            form
-                .frame(maxWidth: .infinity)
-        }
-        .frame(maxWidth: 820, maxHeight: 560)
-        .background(Palette.surface, in: RoundedRectangle(cornerRadius: Radius.sheet, style: .continuous))
-        .overlay(RoundedRectangle(cornerRadius: Radius.sheet, style: .continuous).strokeBorder(Palette.hairline))
-        .shadow(color: .black.opacity(0.08), radius: 24, y: 8)
-        .padding(Space.xxl)
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .task {
-            if let session = model.environment?.session { await viewModel.prefill(from: session) }
-            focused = viewModel.email.isEmpty ? .email : .password
-        }
-    }
-
-    private var brandPanel: some View {
-        VStack(alignment: .leading, spacing: Space.l) {
-            Image("BrandWordmark")
-                .resizable()
-                .interpolation(.high)
-                .scaledToFit()
-                .frame(height: 96)
-                .accessibilityLabel("EffiLens")
-            Spacer()
-            Text("See your work clearly.")
-                .font(Typo.title)
-                .foregroundStyle(Palette.textPrimary)
-            Text("Track time on your tasks, manage leave, and stay in sync with your team.")
-                .font(Typo.body)
-                .foregroundStyle(Palette.textSecondary)
-                .fixedSize(horizontal: false, vertical: true)
-        }
-        .padding(Space.xxl)
-        .frame(maxHeight: .infinity, alignment: .topLeading)
-        .background(Palette.inset)
-    }
-
-    private var form: some View {
-        VStack(alignment: .leading, spacing: Space.l) {
-            VStack(alignment: .leading, spacing: Space.xs) {
-                Text("Sign in").font(Typo.display).foregroundStyle(Palette.textPrimary)
-                Text("Use your work account.").font(Typo.body).foregroundStyle(Palette.textSecondary)
+        OnboardingWindow {
+            HStack(spacing: 10) {
+                AppIconTile(size: 44)
+                VStack(alignment: .leading, spacing: 1) {
+                    Text("EffiLens").font(.system(size: 15, weight: .bold)).foregroundStyle(Palette.textPrimary)
+                    Text("Work, time & leave").font(Typo.caption).foregroundStyle(Palette.textTertiary)
+                }
             }
 
-            VStack(alignment: .leading, spacing: Space.m) {
-                TextField("Work email", text: $viewModel.email)
-                    .textContentType(.username)
-                    .focused($focused, equals: .email)
-                    .onSubmit { focused = .password }
-                SecureField("Password", text: $viewModel.password)
-                    .textContentType(.password)
-                    .focused($focused, equals: .password)
-                    .onSubmit { Task { await viewModel.submit(model: model) } }
-            }
-            .textFieldStyle(.roundedBorder)
-            .controlSize(.large)
-            .disabled(viewModel.isSubmitting)
+            OnboardingHeading(prefix: "Welcome ", emphasis: "back", subtitle: "Sign in with your organisation account.")
+                .padding(.top, 28)
 
-            if let error = viewModel.error {
-                Label(error.userMessage, systemImage: "exclamationmark.circle")
-                    .font(Typo.caption)
-                    .foregroundStyle(Palette.danger)
-                    .fixedSize(horizontal: false, vertical: true)
-                    .accessibilityAddTraits(.isStaticText)
+            FieldLabel("Work email")
+            TextField("name@company.com", text: $viewModel.email)
+                .textFieldStyle(.plain)
+                .textContentType(.username)
+                .focused($focused, equals: .email)
+                .onSubmit { focused = .password }
+                .modifier(EffiFieldBackground(focused: focused == .email))
+            FieldLabel("Password")
+            SecureField("Password", text: $viewModel.password)
+                .textFieldStyle(.plain)
+                .textContentType(.password)
+                .focused($focused, equals: .password)
+                .onSubmit { Task { await viewModel.submit(model: model) } }
+                .modifier(EffiFieldBackground(focused: focused == .password))
+
+            HStack {
+                Spacer()
+                Button("Forgot password?") { Task { await viewModel.requestReset(model: model) } }
+                    .buttonStyle(.plain)
+                    .font(Typo.body)
+                    .foregroundStyle(Palette.accentText)
             }
+            .padding(.top, 10)
 
             Button {
                 Task { await viewModel.submit(model: model) }
             } label: {
-                HStack {
-                    if viewModel.isSubmitting { ProgressView().controlSize(.small) }
+                HStack(spacing: 6) {
+                    if viewModel.isSubmitting { ProgressView().controlSize(.small).tint(Palette.onAccent) }
                     Text(viewModel.isSubmitting ? "Signing in…" : "Sign In")
                 }
-                .frame(maxWidth: .infinity)
             }
-            .buttonStyle(.borderedProminent)
-            .controlSize(.large)
+            .buttonStyle(.effiButton(.primary, .large, fullWidth: true))
             .keyboardShortcut(.defaultAction)
             .disabled(!viewModel.canSubmit)
+            .padding(.top, 20)
 
-            // SSO for desktop clients requires a backend code-exchange endpoint
-            // that does not exist yet (API_INTEGRATION.md gap B2). Shown disabled
-            // with an explanation rather than hidden, to match the prototype.
-            Button("Sign in with SSO") {}
-                .controlSize(.large)
-                .frame(maxWidth: .infinity)
+            // Desktop SSO needs a backend code-exchange endpoint (API_INTEGRATION.md gap B2).
+            Button {} label: { Label("Sign in with SSO", systemImage: "key") }
+                .buttonStyle(.effiButton(.normal, .large, fullWidth: true))
                 .disabled(true)
-                .help("Single sign-on for the desktop app is not yet available. Use your EffiLens password.")
+                .help("Single sign-on for the desktop app is not available yet. Use your EffiLens password.")
+                .padding(.top, 8)
 
-            Spacer()
+            Group {
+                if let error = viewModel.error {
+                    Text(error.userMessage).foregroundStyle(Palette.danger)
+                } else if let reset = viewModel.resetMessage {
+                    Text(reset).foregroundStyle(Palette.success)
+                }
+            }
+            .font(.system(size: 12))
+            .fixedSize(horizontal: false, vertical: true)
+            .padding(.top, 8)
 
-            if let host = model.environment?.configuration.apiOrigin.host() {
-                Label(host, systemImage: "server.rack")
-                    .font(Typo.caption)
-                    .foregroundStyle(Palette.textTertiary)
+            Spacer(minLength: 0)
+            OnboardingFooter(step: .signIn) {
+                if let host = model.environment?.configuration.apiOrigin.host() {
+                    HStack(spacing: 6) {
+                        Image(systemName: "server.rack").font(.system(size: 10)).foregroundStyle(Palette.textTertiary)
+                        Text(host).font(Typo.caption).foregroundStyle(Palette.textSecondary)
+                    }
+                    .help("Server this app signs in to")
+                }
             }
         }
-        .padding(Space.xxl)
+        .disabled(viewModel.isSubmitting)
+        .task {
+            if let session = model.environment?.session { await viewModel.prefill(from: session) }
+            focused = viewModel.email.isEmpty ? .email : .password
+        }
     }
 }

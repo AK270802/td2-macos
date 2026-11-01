@@ -1,36 +1,69 @@
 import SwiftUI
+import Observation
 import EffiLensKit
 
-/// Main window: native NavigationSplitView with the prototype's sidebar
-/// structure and toolbar (sync state · bell · Apply Leave).
+/// In-window navigation state: the sidebar route plus prototype "detail"
+/// pages (request details, team member) that replace the content with a
+/// back button rather than opening a sheet.
+@MainActor
+@Observable
+final class Navigator {
+    var route: Route = .dashboard {
+        didSet { if oldValue != route { leaveDetail = nil; member = nil } }
+    }
+    var leaveDetail: LeaveDetailContext?
+    var member: MemberContext?
+    /// Project filter handed from Projects → Tasks ("View Tasks").
+    var taskProjectFilter: UUID?
+
+    func go(_ route: Route) { self.route = route }
+}
+
+struct LeaveDetailContext: Equatable {
+    let application: LeaveApplication
+    let mode: LeaveDetailView.Mode
+    let back: Route
+}
+
+struct MemberContext: Equatable {
+    let member: UserTimeItem
+    let period: ReportPeriod
+}
+
+/// Main window (prototype `#app`): 228 pt sidebar + main column with a
+/// 52 pt toolbar band. The window uses a hidden title bar so the traffic
+/// lights sit over the sidebar exactly as in the prototype.
 struct MainShellView: View {
     @Environment(AppModel.self) private var model
     @SceneStorage("effilens.route") private var storedRoute: String = Route.dashboard.rawValue
-    @State private var selection: Route? = .dashboard
+    @State private var navigator = Navigator()
+    /// Forces the first route (visual review); otherwise the last route is restored.
+    var initialRoute: Route?
 
     var body: some View {
-        NavigationSplitView {
-            SidebarView(selection: $selection)
-                .navigationSplitViewColumnWidth(min: 210, ideal: 228, max: 280)
-        } detail: {
-            detail(for: selection ?? .dashboard)
-                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-                .background(Palette.canvas)
-                .safeAreaInset(edge: .top, spacing: 0) {
-                    VStack(spacing: 0) {
-                        OfflineBanner()
-                        PermissionsBanner()
-                    }
-                }
-                .id(selection ?? .dashboard)
-                .navigationTitle((selection ?? .dashboard).title)
-                .toolbar { ShellToolbar(unread: model.unreadNotifications, selection: $selection) }
+        HStack(spacing: 0) {
+            EffiSidebar()
+                .frame(width: Metrics.sidebarWidth)
+            Divider().overlay(Palette.hairline)
+            VStack(spacing: 0) {
+                ShellHeader()
+                Divider().overlay(Palette.hairline)
+                OfflineBanner()
+                PermissionsBanner()
+                detail
+                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+            }
+            .background(Palette.canvas)
         }
+        .environment(navigator)
+        .ignoresSafeArea(.container, edges: .top)
         .onAppear {
-            if let restored = Route(rawValue: storedRoute), model.role.atLeast(restored.minimumRole) { selection = restored }
+            if let initialRoute { navigator.route = initialRoute; return }
+            if let restored = Route(rawValue: storedRoute), model.role.atLeast(restored.minimumRole) { navigator.route = restored }
         }
-        .onChange(of: selection) { _, newValue in
-            if let newValue { storedRoute = newValue.rawValue }
+        .onChange(of: navigator.route) { _, newValue in storedRoute = newValue.rawValue }
+        .onChange(of: model.requestedRoute) { _, route in
+            if let route { navigator.go(route); model.requestedRoute = nil }
         }
         .alert(
             "Tracking agent",
@@ -45,199 +78,285 @@ struct MainShellView: View {
     }
 
     @ViewBuilder
-    private func detail(for route: Route) -> some View {
+    private var detail: some View {
         if let environment = model.environment {
-            switch route {
-            case .dashboard:
-                DashboardView(environment: environment, onNavigate: { selection = $0 })
-            case .leaveOverview:
-                LeaveOverviewView(environment: environment, onNavigate: { selection = $0 })
-            case .tracker:
-                TrackerView(environment: environment)
-            case .projects:
-                ProjectsView(environment: environment)
-            case .tasks:
-                TasksView(environment: environment)
-            case .history:
-                HistoryView(environment: environment)
-            case .manualEntry:
-                ManualEntryView(environment: environment)
-            case .applyLeave:
-                ApplyLeaveView(environment: environment, onNavigate: { selection = $0 })
-            case .myRequests:
-                LeaveRequestsView(environment: environment, ownUserId: model.user?.id)
-            case .leaveCalendar:
-                LeaveCalendarView(environment: environment)
-            case .leaveBalance:
-                LeaveBalanceView(environment: environment)
-            case .holidays:
-                HolidaysView(environment: environment)
-            case .team:
-                TeamView(environment: environment)
-            case .approvals:
-                ApprovalsView(environment: environment, me: model.user?.id, role: model.role)
-            case .reports:
-                ReportsView(environment: environment)
-            case .notifications:
-                NotificationsView(environment: environment)
-            case .activity:
-                ActivityView(environment: environment)
-            case .settings:
-                SettingsRootView(pane: .general)
-            case .about:
-                SettingsRootView(pane: .about)
+            Group {
+                if let context = navigator.leaveDetail {
+                    LeaveDetailView(application: context.application, environment: environment, mode: context.mode) {
+                        navigator.leaveDetail = nil
+                    }
+                } else if let context = navigator.member {
+                    MemberDetailView(member: context.member, period: context.period, environment: environment)
+                } else {
+                    screen(navigator.route, environment: environment)
+                }
             }
+            .id(navigator.route.rawValue + (navigator.leaveDetail?.application.id.uuidString ?? "") + (navigator.member?.member.id.uuidString ?? ""))
+        }
+    }
+
+    @ViewBuilder
+    private func screen(_ route: Route, environment: AppEnvironment) -> some View {
+        switch route {
+        case .dashboard: DashboardView(environment: environment, onNavigate: { navigator.go($0) })
+        case .tracker: TrackerView(environment: environment)
+        case .projects: ProjectsView(environment: environment)
+        case .tasks: TasksView(environment: environment)
+        case .history: HistoryView(environment: environment)
+        case .manualEntry: ManualEntryView(environment: environment)
+        case .leaveOverview: LeaveOverviewView(environment: environment, onNavigate: { navigator.go($0) })
+        case .applyLeave: ApplyLeaveView(environment: environment, onNavigate: { navigator.go($0) })
+        case .myRequests: LeaveRequestsView(environment: environment, ownUserId: model.user?.id)
+        case .leaveCalendar: LeaveCalendarView(environment: environment)
+        case .leaveBalance: LeaveBalanceView(environment: environment)
+        case .holidays: HolidaysView(environment: environment)
+        case .team: TeamView(environment: environment)
+        case .approvals: ApprovalsView(environment: environment, me: model.user?.id, role: model.role)
+        case .reports: ReportsView(environment: environment)
+        case .notifications: NotificationsView(environment: environment)
+        case .activity: ActivityView(environment: environment)
+        case .settings: SettingsRootView()
+        case .about: AboutDiagnosticsView()
         }
     }
 }
 
-struct SidebarView: View {
+// MARK: - Sidebar (prototype .sidebar)
+
+struct EffiSidebar: View {
     @Environment(AppModel.self) private var model
-    @Binding var selection: Route?
+    @Environment(Navigator.self) private var navigator
+    @State private var search = ""
 
     var body: some View {
-        List(selection: $selection) {
-            ForEach(Route.sections) { section in
-                let visible = section.routes.filter { model.role.atLeast($0.minimumRole) }
-                if !visible.isEmpty {
-                    if let title = section.title {
-                        Section(title) { rows(visible) }
-                    } else {
-                        rows(visible)
+        VStack(spacing: 0) {
+            ScrollView {
+                VStack(alignment: .leading, spacing: 1) {
+                    searchField
+                    ForEach(Route.sections) { section in
+                        let visible = section.routes.filter { model.role.atLeast($0.minimumRole) }
+                        if !visible.isEmpty {
+                            if let title = section.title {
+                                Text(title).font(Typo.overline).foregroundStyle(Palette.textTertiary)
+                                    .padding(.horizontal, 10).padding(.top, 10).padding(.bottom, 4)
+                            }
+                            ForEach(visible) { route in row(route) }
+                        }
                     }
                 }
+                .padding(.top, 46)
+                .padding(.horizontal, 10)
             }
+            .scrollIndicators(.never)
+            userCard
+                .padding(.horizontal, 10)
+                .padding(.bottom, 12)
+                .padding(.top, 6)
         }
-        .listStyle(.sidebar)
-        .safeAreaInset(edge: .bottom) { userCard }
+        .background(Palette.sidebar)
+    }
+
+    private var searchField: some View {
+        HStack(spacing: 6) {
+            Image(systemName: "magnifyingglass").font(.system(size: 11)).foregroundStyle(Palette.textTertiary)
+            TextField("Search", text: $search)
+                .textFieldStyle(.plain)
+                .font(.system(size: 12.5))
+                .onSubmit {
+                    navigator.taskProjectFilter = nil
+                    navigator.go(.tasks)
+                }
+        }
+        .padding(.horizontal, 8)
+        .frame(height: 26)
+        .background(Palette.textPrimary.opacity(0.07), in: RoundedRectangle(cornerRadius: Radius.control, style: .continuous))
+        .padding(.horizontal, 4)
+        .padding(.bottom, 12)
+    }
+
+    private func isSelected(_ route: Route) -> Bool {
+        if navigator.route == route { return true }
+        return false
+    }
+
+    private func row(_ route: Route) -> some View {
+        let selected = isSelected(route)
+        return Button {
+            navigator.go(route)
+        } label: {
+            HStack(spacing: 9) {
+                if !route.isSubItem {
+                    Image(systemName: route.symbol)
+                        .font(.system(size: 13, weight: .medium))
+                        .foregroundStyle(Palette.accent)
+                        .frame(width: 16)
+                }
+                Text(route.title)
+                    .font(.system(size: 13, weight: route.isSubItem ? .regular : .medium))
+                    .foregroundStyle(route.isSubItem && !selected ? Palette.textSecondary : Palette.textPrimary)
+                    .lineLimit(1)
+                Spacer(minLength: 0)
+                badge(for: route)
+            }
+            .padding(.vertical, 5)
+            .padding(.leading, route.isSubItem ? 35 : 10)
+            .padding(.trailing, 10)
+            .background(selected ? Palette.accentSoft : .clear, in: RoundedRectangle(cornerRadius: Radius.control, style: .continuous))
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(SidebarRowButtonStyle())
+        .accessibilityAddTraits(selected ? .isSelected : [])
     }
 
     @ViewBuilder
-    private func rows(_ routes: [Route]) -> some View {
-        ForEach(routes) { route in
-            Label(route.title, systemImage: route.symbol)
-                .badge(badge(for: route))
-                .tag(route)
+    private func badge(for route: Route) -> some View {
+        if route == .notifications, model.unreadNotifications > 0 {
+            Text("\(model.unreadNotifications)")
+                .font(.system(size: 10.5, weight: .semibold)).foregroundStyle(.white)
+                .padding(.horizontal, 6).background(Palette.redFill, in: Capsule())
         }
-    }
-
-    private func badge(for route: Route) -> Int {
-        route == .notifications ? model.unreadNotifications : 0
     }
 
     private var userCard: some View {
-        HStack(spacing: Space.s) {
-            InitialsAvatar(initials: model.user?.initials ?? "?")
-            VStack(alignment: .leading, spacing: 0) {
-                Text(model.user?.displayName ?? "")
-                    .font(Typo.bodyEmphasis)
-                    .lineLimit(1)
-                trackingStatus
+        Menu {
+            if let org = model.user?.organizationName { Text(org) }
+            Button("Account Settings…") { navigator.go(.settings) }
+            Divider()
+            Button("Sign Out") { Task { await model.signOut() } }
+        } label: {
+            HStack(spacing: 9) {
+                InitialsAvatar(initials: model.user?.initials ?? "?", size: 30)
+                VStack(alignment: .leading, spacing: 1) {
+                    Text(model.user?.displayName ?? "Not signed in").font(.system(size: 12.5, weight: .bold)).foregroundStyle(Palette.textPrimary).lineLimit(1)
+                    trackingStatus.font(.system(size: 11))
+                }
+                Spacer(minLength: 0)
             }
-            Spacer(minLength: 0)
-            Menu {
-                if let org = model.user?.organizationName { Text(org) }
-                Divider()
-                Button("Sign Out") { Task { await model.signOut() } }
-            } label: {
-                Image(systemName: "ellipsis.circle")
-            }
-            .menuStyle(.borderlessButton)
-            .menuIndicator(.hidden)
-            .fixedSize()
-            .accessibilityLabel("Account menu")
+            .padding(10)
+            .background(Palette.textPrimary.opacity(0.04), in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+            .overlay(RoundedRectangle(cornerRadius: 10, style: .continuous).strokeBorder(Palette.hairline))
         }
-        .padding(Space.m)
-        .background(.bar)
+        .menuStyle(.borderlessButton)
+        .menuIndicator(.hidden)
+        .accessibilityLabel("Account menu")
     }
 
     @ViewBuilder
     private var trackingStatus: some View {
         switch model.agentLink {
         case .connected(let state) where state.state == .running:
-            Label("Tracking", systemImage: "circle.fill").foregroundStyle(Palette.success)
+            Text("● Tracking").foregroundStyle(Palette.success)
         case .connected(let state) where state.state == .onBreak:
-            Label("On break", systemImage: "circle.fill").foregroundStyle(Palette.warning)
+            Text("● On break").foregroundStyle(Palette.warning)
         case .connected:
-            Label("Available", systemImage: "circle").foregroundStyle(Palette.textSecondary)
+            Text("● Available").foregroundStyle(Palette.textTertiary)
         case .legacyConflict:
-            Label("Legacy app running", systemImage: "exclamationmark.triangle.fill").foregroundStyle(Palette.warning)
+            Text("● Legacy app running").foregroundStyle(Palette.warning)
         case .unavailable, .unknown:
-            Label("Agent offline", systemImage: "circle.dashed").foregroundStyle(Palette.textTertiary)
+            Text("● Agent offline").foregroundStyle(Palette.textTertiary)
         }
     }
 }
 
-struct ShellToolbar: ToolbarContent {
-    let unread: Int
-    @Binding var selection: Route?
+private struct SidebarRowButtonStyle: ButtonStyle {
+    @State private var hovering = false
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .background(hovering ? Palette.textPrimary.opacity(0.05) : .clear, in: RoundedRectangle(cornerRadius: Radius.control, style: .continuous))
+            .onHover { hovering = $0 }
+            .opacity(configuration.isPressed ? 0.8 : 1)
+    }
+}
 
-    var body: some ToolbarContent {
-        ToolbarItemGroup(placement: .primaryAction) {
+// MARK: - Toolbar band (prototype .toolbar)
+
+struct ShellHeader: View {
+    @Environment(AppModel.self) private var model
+    @Environment(Navigator.self) private var navigator
+    @Environment(\.openWindow) private var openWindow
+
+    private var titles: (String, String) {
+        if let detail = navigator.leaveDetail { return ("Request Details", Format.dateRange(detail.application.startDate, detail.application.endDate)) }
+        if let member = navigator.member { return ("Team Member", member.member.displayName) }
+        return (navigator.route.toolbarTitle, navigator.route.toolbarSubtitle)
+    }
+
+    var body: some View {
+        HStack(spacing: 10) {
+            VStack(alignment: .leading, spacing: 1) {
+                Text(titles.0).font(Typo.toolbarTitle).foregroundStyle(Palette.textPrimary)
+                if !titles.1.isEmpty { Text(titles.1).font(.system(size: 12)).foregroundStyle(Palette.textTertiary) }
+            }
+            Spacer()
             SyncIndicator()
-            Button {
-                selection = .notifications
-            } label: {
-                Image(systemName: unread > 0 ? "bell.badge" : "bell")
-            }
-            .help("Notifications")
-            .accessibilityLabel(unread > 0 ? "Notifications, \(unread) unread" : "Notifications")
-
-            Button {
-                selection = .applyLeave
-            } label: {
-                Label("Apply Leave", systemImage: "plus")
-            }
-            .buttonStyle(.borderedProminent)
-            .help("Apply for leave (⌘N)")
-            .keyboardShortcut("n", modifiers: .command)
+            ToolbarIconButton(symbol: "capsule.portrait.righthalf.filled", help: "Mini timer (⌥⌘M)") { openWindow(id: SceneID.miniTimer) }
+            ToolbarIconButton(symbol: "bell", help: model.unreadNotifications > 0 ? "Notifications, \(model.unreadNotifications) unread" : "Notifications",
+                              showsPip: model.unreadNotifications > 0) { navigator.go(.notifications) }
+            Button("+ Apply Leave") { navigator.go(.applyLeave) }
+                .buttonStyle(.effiPrimary)
+                .keyboardShortcut("n", modifiers: .command)
+                .help("Apply for leave (⌘N)")
         }
+        .padding(.horizontal, 18)
+        .frame(height: Metrics.toolbarHeight)
+        .background(Palette.toolbar)
     }
 }
 
-/// Toolbar sync pill — reflects the local agent's real queue state.
+/// Sync pill (`.sync` / `.sync.off`) — reflects the agent's real queue.
 struct SyncIndicator: View {
     @Environment(AppModel.self) private var model
 
-    var body: some View {
+    private var state: (text: String, ok: Bool, help: String) {
         switch model.agentLink {
         case .connected:
             if let sync = model.syncStatus {
                 if sync.connected {
-                    StatusPill(text: sync.lastSync.map { "Synced · \(Format.relative($0))" } ?? "Connected", tone: .success)
-                } else {
-                    StatusPill(text: "Offline · \(sync.pendingEvents) pending", tone: .danger)
+                    return (sync.lastSync.map { "Synced · \(Format.relative($0))" } ?? "Connected", true, "Activity is syncing to the server.")
                 }
-            } else {
-                StatusPill(text: "Connected", tone: .success)
+                return ("Offline · \(sync.pendingEvents) pending", false, "Activity is saved on this Mac and syncs when the connection returns.")
             }
+            return ("Connected", true, "Tracking agent connected.")
         case .legacyConflict:
-            StatusPill(text: "Legacy agent running", tone: .warning)
-                .help("Quit the older EffiLens app to enable tracking here. Running both would record time twice.")
+            return ("Legacy agent running", false, "Quit the older WorkPulse app to enable tracking here.")
         case .unavailable, .unknown:
-            StatusPill(text: "Agent offline", tone: .neutral)
-                .help("The EffiLens tracking agent is not running. Time tracking is unavailable; everything else works.")
+            return ("Agent offline", false, "The EffiLens tracking agent is not running. Tracking is unavailable; everything else works.")
         }
+    }
+
+    var body: some View {
+        let s = state
+        HStack(spacing: 6) {
+            Circle().fill(s.ok ? Palette.okFill : Palette.redFill).frame(width: 6, height: 6)
+            Text(s.text).font(.system(size: 11.5)).foregroundStyle(Palette.textSecondary)
+        }
+        .padding(.horizontal, 9)
+        .padding(.vertical, 3)
+        .background((s.ok ? Palette.okFill : Palette.redFill).opacity(0.10), in: Capsule())
+        .overlay(Capsule().strokeBorder((s.ok ? Palette.okFill : Palette.redFill).opacity(0.28)))
+        .help(s.help)
+        .accessibilityElement(children: .combine)
     }
 }
 
-/// Shown when the agent reports it can't reach the server. Activity keeps
-/// being recorded locally and syncs automatically when the network returns.
+/// Prototype `.offline-banner`.
 struct OfflineBanner: View {
     @Environment(AppModel.self) private var model
 
     var body: some View {
         if let sync = model.syncStatus, !sync.connected, model.isAgentConnected {
             HStack(spacing: Space.m) {
-                Image(systemName: "wifi.slash").foregroundStyle(Palette.danger)
-                Text("Offline — \(sync.pendingEvents) activity record(s) saved on this Mac will sync when the connection returns.")
-                    .font(Typo.body)
+                Text("⚠︎ You're offline. Tracking continues locally — \(sync.pendingEvents) record(s) waiting to sync.")
+                    .font(.system(size: 12.5))
+                    .foregroundStyle(Palette.danger)
                 Spacer()
-                Button("Retry Now") { Task { await model.runAgent { try await $0.syncNow() } } }
+                Button("Reconnect") { Task { await model.runAgent { try await $0.syncNow() } } }
+                    .buttonStyle(.effi)
             }
-            .padding(.horizontal, Space.l)
-            .padding(.vertical, Space.s)
-            .background(Palette.danger.opacity(0.10))
+            .padding(.horizontal, 24)
+            .padding(.vertical, 9)
+            .background(Palette.redFill.opacity(0.12))
+            .overlay(alignment: .bottom) { Rectangle().fill(Palette.redFill.opacity(0.3)).frame(height: 1) }
         }
     }
 }

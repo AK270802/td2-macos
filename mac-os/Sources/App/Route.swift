@@ -62,6 +62,55 @@ enum Route: String, Hashable, CaseIterable, Identifiable {
         }
     }
 
+    /// Prototype NAV: items under a section head (except the first) are
+    /// indented sub-items with no icon.
+    var isSubItem: Bool {
+        switch self {
+        case .projects, .tasks, .history, .manualEntry,
+             .applyLeave, .myRequests, .leaveCalendar, .leaveBalance, .holidays:
+            return true
+        default:
+            return false
+        }
+    }
+
+    /// Toolbar title / subtitle (prototype TITLES; subtitles describe the
+    /// screen, never fabricated counts).
+    var toolbarTitle: String {
+        switch self {
+        case .manualEntry: return "Manual Time Entry"
+        case .myRequests: return "My Leave Requests"
+        case .holidays: return "Holiday Calendar"
+        case .team: return "Team Overview"
+        case .approvals: return "Approval Inbox"
+        case .notifications: return "Notification Centre"
+        case .activity: return "Activity Timeline"
+        default: return title
+        }
+    }
+
+    var toolbarSubtitle: String {
+        switch self {
+        case .dashboard: return "Today’s overview"
+        case .tracker: return "Start, pause and stop sessions"
+        case .projects: return "Assigned projects"
+        case .tasks: return "Search and select tasks"
+        case .history: return "Daily and weekly records"
+        case .manualEntry: return "Administrators only"
+        case .leaveOverview: return "Balance, holidays and requests"
+        case .applyLeave: return "New request"
+        case .myRequests: return "All requests"
+        case .leaveCalendar: return "Your leave and holidays"
+        case .leaveBalance: return "Current year"
+        case .holidays: return "Organisation holidays"
+        case .team: return "Your team"
+        case .approvals: return "Manager view"
+        case .reports: return "Productivity, time, attendance, leave"
+        case .notifications, .settings, .about: return ""
+        case .activity: return "Recent events"
+        }
+    }
+
     /// Minimum role, mirroring the backend dependency guarding the route's
     /// primary endpoint (verified in core-services/app/api/v1):
     /// - Approvals → manager-approve requires manager+.

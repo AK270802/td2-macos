@@ -33,6 +33,8 @@ final class AppModel {
     private(set) var permissions: AgentPermissions?
     private(set) var agentRegistration: AgentLifecycle.Registration?
     var unreadNotifications = 0
+    /// Route requested from outside the main window (menu bar, commands).
+    var requestedRoute: Route?
     private var notificationsPrimed = false
     private var unreadPollTask: Task<Void, Never>?
     private let reminder = InactiveReminder()

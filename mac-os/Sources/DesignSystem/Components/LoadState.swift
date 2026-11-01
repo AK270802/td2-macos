@@ -22,7 +22,7 @@ enum Loadable<Value> {
 extension Loadable: Equatable where Value: Equatable {}
 
 /// Renders loading / error / content for a `Loadable`, with an optional
-/// emptiness predicate that switches to an empty state.
+/// emptiness predicate that switches to the prototype's `.empty` state.
 struct LoadStateView<Value, Content: View>: View {
     let state: Loadable<Value>
     var emptyTitle: String = "Nothing here yet"
@@ -35,24 +35,42 @@ struct LoadStateView<Value, Content: View>: View {
     var body: some View {
         switch state {
         case .idle, .loading:
-            ProgressView()
-                .controlSize(.small)
-                .frame(maxWidth: .infinity, minHeight: 120)
-                .accessibilityLabel("Loading")
+            HStack(spacing: Space.s) {
+                ProgressView().controlSize(.small).tint(Palette.accent)
+                Text("Loading…").font(Typo.caption).foregroundStyle(Palette.textTertiary)
+            }
+            .frame(maxWidth: .infinity, minHeight: 120)
+            .accessibilityElement(children: .combine)
         case .failed(let error):
             ErrorStateView(error: error, retry: retry)
         case .loaded(let value):
             if isEmpty(value) {
-                ContentUnavailableView {
-                    Label(emptyTitle, systemImage: emptySymbol)
-                } description: {
-                    if !emptyMessage.isEmpty { Text(emptyMessage) }
-                }
-                .frame(maxWidth: .infinity, minHeight: 140)
+                EmptyStateView(title: emptyTitle, message: emptyMessage, symbol: emptySymbol)
             } else {
                 content(value)
             }
         }
+    }
+}
+
+/// `.empty` — centred tertiary text, generous padding.
+struct EmptyStateView: View {
+    let title: String
+    var message: String = ""
+    var symbol: String = "tray"
+
+    var body: some View {
+        VStack(spacing: Space.s) {
+            Image(systemName: symbol).font(.system(size: 22, weight: .light)).foregroundStyle(Palette.textTertiary)
+            Text(title).font(Typo.bodyEmphasis).foregroundStyle(Palette.textSecondary)
+            if !message.isEmpty {
+                Text(message).font(Typo.caption).foregroundStyle(Palette.textTertiary).multilineTextAlignment(.center)
+            }
+        }
+        .padding(.vertical, 40)
+        .padding(.horizontal, Space.xl)
+        .frame(maxWidth: .infinity)
+        .accessibilityElement(children: .combine)
     }
 }
 
@@ -70,13 +88,16 @@ struct ErrorStateView: View {
     }
 
     var body: some View {
-        ContentUnavailableView {
-            Label(error == .offline ? "Offline" : "Couldn't load", systemImage: symbol)
-        } description: {
-            Text(error.userMessage)
-        } actions: {
-            if let retry { Button("Try Again", action: retry).keyboardShortcut("r", modifiers: .command) }
+        VStack(spacing: Space.s) {
+            Image(systemName: symbol).font(.system(size: 20)).foregroundStyle(Palette.danger)
+            Text(error == .offline ? "You're offline" : "Couldn't load").font(Typo.bodyEmphasis).foregroundStyle(Palette.textPrimary)
+            Text(error.userMessage).font(Typo.caption).foregroundStyle(Palette.textSecondary).multilineTextAlignment(.center)
+            if let retry {
+                Button("Try Again", action: retry).buttonStyle(.effi).keyboardShortcut("r", modifiers: .command).padding(.top, 4)
+            }
         }
-        .frame(maxWidth: .infinity, minHeight: 140)
+        .padding(.vertical, 32)
+        .padding(.horizontal, Space.xl)
+        .frame(maxWidth: .infinity)
     }
 }

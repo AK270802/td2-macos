@@ -6,10 +6,10 @@ import EffiLensKit
 // overlap checks) are enforced by core-services. These screens collect input,
 // show server responses and never compute balances locally.
 
-// MARK: - Apply for leave (POST /leave/applications)
+// MARK: - Apply for leave (prototype V.apply: 1.3 : 1; POST /leave/applications)
 
 struct ApplyLeaveView: View {
-    @Environment(AppModel.self) private var model
+    @Environment(Navigator.self) private var navigator
     @State private var start = Date()
     @State private var end = Date()
     @State private var halfDay = false
@@ -18,16 +18,23 @@ struct ApplyLeaveView: View {
     @State private var error: AppError?
     @State private var submitted: LeaveApplication?
     @State private var balance: LeaveBalance?
+    @State private var managerName: String?
     private let leave: LeaveService
+    private let profile: ProfileService
     let onNavigate: (Route) -> Void
 
     init(environment: AppEnvironment, onNavigate: @escaping (Route) -> Void) {
         leave = environment.leave
+        profile = environment.profile
         self.onNavigate = onNavigate
     }
 
     private var startDay: CalendarDate { CalendarDate(start) }
     private var endDay: CalendarDate { CalendarDate(halfDay ? start : end) }
+    private var calendarDays: Int {
+        let cal = Calendar.current
+        return (cal.dateComponents([.day], from: cal.startOfDay(for: start), to: cal.startOfDay(for: halfDay ? start : end)).day ?? 0) + 1
+    }
     private var validation: String? {
         if endDay < startDay { return "End date must be on or after the start date." }
         if reason.count > 1000 { return "Reason is too long (1000 characters max)." }
@@ -35,52 +42,94 @@ struct ApplyLeaveView: View {
     }
 
     var body: some View {
-        Form {
-            if let balance {
-                Section {
-                    LabeledContent("Paid leave remaining", value: "\(Format.days(balance.paidRemaining)) days")
-                    LabeledContent("Comp-off remaining", value: "\(Format.days(balance.compOffRemaining)) days")
-                } footer: {
-                    Text("If paid leave runs out, the remainder is recorded as unpaid. The server decides the split.")
-                }
-            }
-            Section("Dates") {
-                DatePicker("From", selection: $start, displayedComponents: .date)
-                Toggle("Half day", isOn: $halfDay)
-                if !halfDay {
-                    DatePicker("To", selection: $end, in: start..., displayedComponents: .date)
-                }
-                LabeledContent("Requested", value: Format.dateRange(startDay, endDay))
-            }
-            Section("Reason (optional)") {
-                TextEditor(text: $reason).frame(minHeight: 80).font(Typo.body)
-            }
-            Section {
-                if let validation { Text(validation).font(Typo.caption).foregroundStyle(Palette.danger) }
-                if let error { Label(error.userMessage, systemImage: "exclamationmark.circle").foregroundStyle(Palette.danger) }
-                if let submitted {
-                    Label(submitted.message ?? "Request submitted — \(submitted.statusValue?.displayName ?? submitted.status).",
-                          systemImage: "checkmark.circle")
-                        .foregroundStyle(Palette.success)
-                    Button("View My Requests") { onNavigate(.myRequests) }
-                }
-                Button {
-                    Task { await submit() }
-                } label: {
-                    HStack {
-                        if submitting { ProgressView().controlSize(.small) }
-                        Text("Submit Request")
+        Page {
+            FractionalColumns(ratio: 1.3) {
+                Card("Leave request") {
+                    VStack(alignment: .leading, spacing: 0) {
+                        FieldLabel("Leave type").padding(.top, -12)
+                        HStack(spacing: 8) {
+                            EffiSegmented(selection: .constant(0), options: [(0, "Paid leave")])
+                            Text("Paid or unpaid is decided by your balance.").font(Typo.caption).foregroundStyle(Palette.textTertiary)
+                        }
+                        EqualColumns(count: 2, spacing: 10) {
+                            VStack(alignment: .leading, spacing: 0) {
+                                FieldLabel("From")
+                                FieldChrome { DatePicker("From", selection: $start, displayedComponents: .date).datePickerStyle(.field) }
+                            }
+                            VStack(alignment: .leading, spacing: 0) {
+                                FieldLabel("To")
+                                FieldChrome { DatePicker("To", selection: $end, in: start..., displayedComponents: .date).datePickerStyle(.field) }
+                                    .disabled(halfDay)
+                            }
+                        }
+                        FieldLabel("Duration")
+                        EffiSegmented(selection: $halfDay, options: [(false, "Full day"), (true, "Half day")])
+                        FieldLabel("Reason")
+                        EffiTextArea(placeholder: "Brief reason for your manager", text: $reason)
+                        FieldLabel("Approver")
+                        HStack(spacing: 6) {
+                            Pill(text: managerName.map { "\($0) (Manager)" } ?? "Your manager", kind: .blue)
+                        }
+                        Group {
+                            if let validation { Text(validation).foregroundStyle(Palette.danger) }
+                            else if let error { Text(error.userMessage).foregroundStyle(Palette.danger) }
+                            else if let submitted {
+                                HStack {
+                                    Text(submitted.message ?? "Request submitted — \(submitted.statusValue?.displayName ?? submitted.status).").foregroundStyle(Palette.success)
+                                    CardLink("View request") { navigator.leaveDetail = LeaveDetailContext(application: submitted, mode: .own, back: .myRequests) }
+                                }
+                            }
+                        }
+                        .font(.system(size: 12))
+                        .padding(.top, 10)
+                        HStack {
+                            Spacer()
+                            Button("Cancel") { onNavigate(.leaveOverview) }.buttonStyle(.effi)
+                            Button {
+                                Task { await submit() }
+                            } label: {
+                                HStack(spacing: 6) {
+                                    if submitting { ProgressView().controlSize(.small) }
+                                    Text("Submit Request")
+                                }
+                            }
+                            .buttonStyle(.effiPrimary)
+                            .keyboardShortcut(.defaultAction)
+                            .disabled(validation != nil || submitting)
+                        }
+                        .padding(.top, 14)
                     }
                 }
-                .buttonStyle(.borderedProminent)
-                .keyboardShortcut(.defaultAction)
-                .disabled(validation != nil || submitting)
+                summary
             }
         }
-        .formStyle(.grouped)
-        .frame(maxWidth: 640)
         .onChange(of: start) { _, newValue in if end < newValue { end = newValue } }
-        .task { balance = try? await leave.balance(year: Calendar.current.component(.year, from: start)) }
+        .task {
+            balance = try? await leave.balance(year: Calendar.current.component(.year, from: start))
+            managerName = try? await profile.profile().managerName
+        }
+    }
+
+    private var summary: some View {
+        Card("Summary") {
+            VStack(spacing: 10) {
+                let total = balance?.paidAllocated.doubleValue ?? 0
+                let remaining = balance?.paidRemaining?.doubleValue ?? 0
+                ProgressRing(progress: total > 0 ? remaining / total : 0, lineWidth: 10) {
+                    VStack(spacing: 0) {
+                        Text(halfDay ? "½" : "\(calendarDays)").font(.system(size: 26, weight: .semibold, design: .monospaced))
+                        Text(halfDay ? "day" : "calendar day\(calendarDays == 1 ? "" : "s")").font(.system(size: 10.5)).foregroundStyle(Palette.textTertiary)
+                    }
+                }
+                .frame(width: 130, height: 130)
+                .padding(.vertical, 10)
+                Text(Format.dateRange(startDay, endDay)).font(Typo.bodyEmphasis)
+                Text(balance.map { "\(Format.days($0.paidRemaining)) paid days remaining. Weekends and holidays are excluded by the server; any shortfall is recorded as unpaid." }
+                     ?? "Loading your balance…")
+                    .font(Typo.body).foregroundStyle(Palette.textSecondary).multilineTextAlignment(.center).lineSpacing(3)
+            }
+            .frame(maxWidth: .infinity)
+        }
     }
 
     private func submit() async {
@@ -98,14 +147,14 @@ struct ApplyLeaveView: View {
     }
 }
 
-// MARK: - My requests + detail
+// MARK: - My requests (prototype V.requests)
 
 @MainActor
 @Observable
 final class LeaveRequestsViewModel {
-    var statusFilter: LeaveStatus?
+    enum Filter: String, CaseIterable { case all = "All", pending = "Pending", approved = "Approved", rejected = "Rejected", cancelled = "Cancelled" }
+    var filter: Filter = .all
     private(set) var list: Loadable<[LeaveApplication]> = .idle
-    var actionError: AppError?
     private let leave: LeaveService
     let ownUserId: UUID?
 
@@ -114,146 +163,211 @@ final class LeaveRequestsViewModel {
         self.ownUserId = ownUserId
     }
 
-    func load() async {
-        list = .loading
-        do {
-            // Own requests only — managers see team requests under Approvals.
-            let page = try await leave.applications(userId: ownUserId, status: statusFilter, pageSize: 200)
-            list = .loaded(page.items.sorted { $0.startDate > $1.startDate })
-        } catch { list = .failed(DashboardViewModel.map(error)) }
+    var filtered: [LeaveApplication] {
+        let items = list.value ?? []
+        switch filter {
+        case .all: return items
+        case .pending: return items.filter { $0.statusValue?.isPending == true }
+        case .approved: return items.filter { $0.statusValue == .approved }
+        case .rejected: return items.filter { $0.statusValue == .rejected }
+        case .cancelled: return items.filter { $0.statusValue == .cancelled }
+        }
     }
 
-    func withdraw(_ application: LeaveApplication) async {
-        do { _ = try await leave.cancel(application.id); await load() } catch { actionError = DashboardViewModel.map(error) }
+    func load() async {
+        if list.value == nil { list = .loading }
+        do {
+            // Own requests only — managers review team requests under Approvals.
+            let page = try await leave.applications(userId: ownUserId, pageSize: 200)
+            list = .loaded(page.items.sorted { $0.startDate > $1.startDate })
+        } catch { list = .failed(DashboardViewModel.map(error)) }
     }
 }
 
 struct LeaveRequestsView: View {
+    @Environment(Navigator.self) private var navigator
     @State private var viewModel: LeaveRequestsViewModel
-    @State private var selected: LeaveApplication?
-    private let environment: AppEnvironment
 
     init(environment: AppEnvironment, ownUserId: UUID?) {
-        self.environment = environment
         _viewModel = State(initialValue: LeaveRequestsViewModel(environment: environment, ownUserId: ownUserId))
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: Space.m) {
-            Picker("Status", selection: $viewModel.statusFilter) {
-                Text("All").tag(LeaveStatus?.none)
-                ForEach(LeaveStatus.allCases, id: \.self) { Text($0.displayName).tag(Optional($0)) }
+        Page {
+            HStack {
+                EffiSegmented(selection: $viewModel.filter, options: LeaveRequestsViewModel.Filter.allCases.map { ($0, $0.rawValue) })
+                Spacer()
+                Button("+ New Request") { navigator.go(.applyLeave) }.buttonStyle(.effiPrimary)
             }
-            .frame(maxWidth: 260)
-            .padding([.horizontal, .top], Space.xl)
-
-            LoadStateView(state: viewModel.list, emptyTitle: "No leave requests", emptyMessage: "Requests you submit appear here.",
-                          emptySymbol: "tray", isEmpty: { $0.isEmpty }, retry: { Task { await viewModel.load() } }) { items in
-                LeaveApplicationTable(items: items, showEmployee: false, selection: $selected)
+            Card(padding: 6) {
+                LoadStateView(state: viewModel.list, retry: { Task { await viewModel.load() } }) { _ in
+                    if viewModel.filtered.isEmpty {
+                        EmptyStateView(title: "No requests in this category.", symbol: "tray")
+                    } else {
+                        LeaveApplicationTable(items: viewModel.filtered, showEmployee: false) { a in
+                            navigator.leaveDetail = LeaveDetailContext(application: a, mode: .own, back: .myRequests)
+                        }
+                    }
+                }
             }
         }
-        .task(id: viewModel.statusFilter) { await viewModel.load() }
-        .sheet(item: $selected) { application in
-            LeaveDetailView(application: application, environment: environment, mode: .own) {
-                Task { await viewModel.load() }
-            }
-        }
+        .task { await viewModel.load() }
     }
 }
 
 struct LeaveApplicationTable: View {
     let items: [LeaveApplication]
     let showEmployee: Bool
-    @Binding var selection: LeaveApplication?
+    var onSelect: (LeaveApplication) -> Void
 
     var body: some View {
-        Table(items) {
-            TableColumn("Dates") { a in Text(Format.dateRange(a.startDate, a.endDate)) }
-            TableColumn("Employee") { a in Text(showEmployee ? (a.userDisplayName ?? a.userEmail ?? "—") : "You") }
-            TableColumn("Days") { a in Text(Format.days(a.durationDays)).monospacedDigit() }.width(50)
-            TableColumn("Type") { a in Text(a.kind?.displayName ?? a.leaveType.capitalized) }.width(100)
-            TableColumn("Status") { a in LeaveStatusPill(status: a.statusValue) }.width(140)
-            TableColumn("") { a in Button("Details") { selection = a }.controlSize(.small) }.width(80)
+        EffiTable<LeaveApplication>(rows: items, columns: columns, onSelect: onSelect)
+    }
+
+    private var columns: [EffiTable<LeaveApplication>.Column] {
+        var cols: [EffiTable<LeaveApplication>.Column] = []
+        if showEmployee {
+            cols.append(.init("Employee") { a in Text(a.userDisplayName ?? a.userEmail ?? "—").font(Typo.bodyEmphasis) })
         }
+        cols.append(.init("Type") { a in Text(a.kind?.displayName ?? a.leaveType.capitalized).font(Typo.bodyEmphasis) })
+        cols.append(.init("Dates") { a in Text(Format.dateRange(a.startDate, a.endDate)) })
+        cols.append(.init("Days", width: 60) { a in Text(Format.days(a.durationDays)).font(Typo.mono) })
+        cols.append(.init("Applied", width: 110) { a in Text(a.createdAt.formatted(.dateTime.day().month(.abbreviated))).foregroundStyle(Palette.textSecondary) })
+        cols.append(.init("Status", width: 150) { a in LeaveStatusPill(status: a.statusValue) })
+        cols.append(.init("", width: 30) { _ in Text("›").foregroundStyle(Palette.textTertiary) })
+        return cols
     }
 }
 
+// MARK: - Request details page (prototype V.detail)
+
 struct LeaveDetailView: View {
-    enum Mode { case own, managerReview, adminReview }
+    enum Mode: Equatable { case own, managerReview, adminReview }
 
     let application: LeaveApplication
     let environment: AppEnvironment
     let mode: Mode
-    var onChange: () -> Void
-    @Environment(\.dismiss) private var dismiss
+    /// Returns to the previous screen (and lets it reload).
+    var onClose: () -> Void
     @State private var rejectReason = ""
     @State private var working = false
     @State private var error: AppError?
     @State private var confirmWithdraw = false
 
     private var leave: LeaveService { environment.leave }
+    private var backTitle: String { mode == .own ? "‹ My Requests" : "‹ Back" }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: Space.l) {
-            HStack {
-                Text("Leave request").font(Typo.title)
-                Spacer()
-                LeaveStatusPill(status: application.statusValue)
-            }
-            Grid(alignment: .leading, horizontalSpacing: Space.l, verticalSpacing: Space.s) {
-                row("Employee", application.userDisplayName ?? application.userEmail ?? "You")
-                row("Dates", Format.dateRange(application.startDate, application.endDate))
-                row("Duration", "\(Format.days(application.durationDays)) day(s)")
-                row("Paid / unpaid", "\(Format.days(application.paidDays)) / \(Format.days(application.unpaidDays))")
-                row("Type", application.kind?.displayName ?? application.leaveType)
-                row("Source", application.sourceValue?.displayName ?? application.source)
-                row("Submitted", application.createdAt.formatted(date: .abbreviated, time: .shortened))
-                if let reason = application.reason, !reason.isEmpty { row("Reason", reason) }
-                if let rejection = application.rejectionReason { row("Rejection reason", rejection) }
-                if let at = application.managerApprovedAt { row("Manager approved", at.formatted(date: .abbreviated, time: .shortened)) }
-                if let at = application.adminApprovedAt { row("Admin approved", at.formatted(date: .abbreviated, time: .shortened)) }
-            }
-
-            if mode != .own, application.statusValue?.isPending == true {
-                TextField("Reason for rejection (required to reject)", text: $rejectReason, axis: .vertical)
-                    .textFieldStyle(.roundedBorder).lineLimit(2...4)
-            }
-            if let error { Label(error.userMessage, systemImage: "exclamationmark.circle").foregroundStyle(Palette.danger) }
-
-            HStack {
-                if mode == .own, application.isWithdrawable {
-                    Button("Withdraw Request", role: .destructive) { confirmWithdraw = true }
+        Page {
+            HStack { Button(backTitle, action: onClose).buttonStyle(.effi) }
+            FractionalColumns(ratio: 1.3) {
+                Card {
+                    HStack(alignment: .top) {
+                        VStack(alignment: .leading, spacing: 4) {
+                            Text(application.userDisplayName ?? "Your request").font(Typo.mono).foregroundStyle(Palette.textTertiary)
+                            Text("\(application.kind?.displayName ?? application.leaveType.capitalized) leave").font(Typo.pageTitle)
+                        }
+                        Spacer()
+                        LeaveStatusPill(status: application.statusValue)
+                    }
+                    EqualColumns(count: 3) {
+                        fact("From", application.startDate.date()?.formatted(date: .abbreviated, time: .omitted) ?? application.startDate.description)
+                        fact("To", application.endDate.date()?.formatted(date: .abbreviated, time: .omitted) ?? application.endDate.description)
+                        fact("Duration", "\(Format.days(application.durationDays)) working day\(application.durationDays.doubleValue == 1 ? "" : "s")")
+                    }
+                    .padding(.top, 18)
+                    EqualColumns(count: 3) {
+                        fact("Paid", "\(Format.days(application.paidDays)) d")
+                        fact("Unpaid", "\(Format.days(application.unpaidDays)) d")
+                        fact("Source", application.sourceValue?.displayName ?? application.source)
+                    }
+                    .padding(.top, 10)
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text("Reason").font(Typo.small).foregroundStyle(Palette.textTertiary)
+                        Text(application.reason?.isEmpty == false ? application.reason! : "No reason given").font(Typo.body).textSelection(.enabled)
+                    }
+                    .padding(.top, 16)
+                    actions.padding(.top, 20)
+                    if let error { Text(error.userMessage).font(.system(size: 12)).foregroundStyle(Palette.danger) }
                 }
-                Spacer()
-                if working { ProgressView().controlSize(.small) }
-                Button("Close") { dismiss() }.keyboardShortcut(.cancelAction)
-                if mode != .own, application.statusValue?.isPending == true {
-                    Button("Reject", role: .destructive) { Task { await act(approve: false) } }
+                Card("Approval history") {
+                    VStack(alignment: .leading, spacing: 0) {
+                        let steps = timeline
+                        ForEach(Array(steps.enumerated()), id: \.offset) { index, step in
+                            TimelineItem(tone: step.tone, isLast: index == steps.count - 1) {
+                                VStack(alignment: .leading, spacing: 2) {
+                                    Text(step.title).font(Typo.bodyEmphasis)
+                                    if let detail = step.detail { Text(detail).font(Typo.caption).foregroundStyle(Palette.textTertiary).fixedSize(horizontal: false, vertical: true) }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        .confirmationDialog("Withdraw this leave request?", isPresented: $confirmWithdraw) {
+            Button("Withdraw", role: .destructive) { Task { await withdraw() } }
+        } message: {
+            Text("\(Format.dateRange(application.startDate, application.endDate)) · \(Format.days(application.durationDays)) day(s). Your approver will be notified.")
+        }
+    }
+
+    @ViewBuilder
+    private var actions: some View {
+        if mode == .own {
+            if application.isWithdrawable {
+                Button("Withdraw Request") { confirmWithdraw = true }.buttonStyle(.effiDanger).disabled(working)
+            }
+        } else if application.statusValue?.isPending == true {
+            VStack(alignment: .leading, spacing: 8) {
+                EffiTextArea(placeholder: "Reason for rejection (required to reject)", text: $rejectReason, height: 56)
+                HStack {
+                    if working { ProgressView().controlSize(.small) }
+                    Spacer()
+                    Button("Reject") { Task { await act(approve: false) } }
+                        .buttonStyle(.effiDanger)
                         .disabled(rejectReason.trimmingCharacters(in: .whitespaces).isEmpty || working)
                     Button("Approve") { Task { await act(approve: true) } }
-                        .buttonStyle(.borderedProminent)
+                        .buttonStyle(.effiPrimary)
                         .disabled(working)
                 }
             }
         }
-        .padding(Space.xl)
-        .frame(width: 520)
-        .confirmationDialog("Withdraw this leave request?", isPresented: $confirmWithdraw) {
-            Button("Withdraw", role: .destructive) { Task { await withdraw() } }
+    }
+
+    private func fact(_ label: String, _ value: String) -> some View {
+        VStack(alignment: .leading, spacing: 2) {
+            Text(label).font(Typo.small).foregroundStyle(Palette.textTertiary)
+            Text(value).font(Typo.bodyEmphasis)
         }
     }
 
-    private func row(_ label: String, _ value: String) -> some View {
-        GridRow {
-            Text(label).font(Typo.caption).foregroundStyle(Palette.textSecondary)
-            Text(value).font(Typo.body).textSelection(.enabled)
+    private struct Step {
+        let title: String
+        let detail: String?
+        let tone: TimelineTone
+    }
+
+    private var timeline: [Step] {
+        let fmt: (Date) -> String = { $0.formatted(date: .abbreviated, time: .shortened) }
+        var steps = [Step(title: "Submitted", detail: fmt(application.createdAt), tone: .accent)]
+        if let at = application.managerApprovedAt { steps.append(Step(title: "Approved by manager", detail: fmt(at), tone: .ok)) }
+        if let at = application.managerRejectedAt { steps.append(Step(title: "Rejected by manager", detail: [fmt(at), application.managerRejectionReason.map { "“\($0)”" }].compactMap { $0 }.joined(separator: " · "), tone: .no)) }
+        if let at = application.adminApprovedAt { steps.append(Step(title: "Approved by administrator", detail: fmt(at), tone: .ok)) }
+        if let at = application.adminRejectedAt { steps.append(Step(title: "Rejected by administrator", detail: [fmt(at), application.adminRejectionReason.map { "“\($0)”" }].compactMap { $0 }.joined(separator: " · "), tone: .no)) }
+        switch application.statusValue {
+        case .pendingManager: steps.append(Step(title: "Awaiting manager", detail: "Manager review", tone: .accent))
+        case .pendingAdmin: steps.append(Step(title: "Awaiting administrator", detail: "Final approval", tone: .accent))
+        case .cancelled: steps.append(Step(title: "Withdrawn", detail: fmt(application.updatedAt), tone: .no))
+        default: break
         }
+        return steps
     }
 
     private func withdraw() async {
         working = true
         defer { working = false }
-        do { _ = try await leave.cancel(application.id); onChange(); dismiss() } catch { self.error = DashboardViewModel.map(error) }
+        do { _ = try await leave.cancel(application.id); onClose() } catch { self.error = DashboardViewModel.map(error) }
     }
 
     private func act(approve: Bool) async {
@@ -268,188 +382,235 @@ struct LeaveDetailView: View {
             case (.adminReview, false): _ = try await leave.adminReject(application.id, reason: reason)
             case (.own, _): return
             }
-            onChange()
-            dismiss()
+            onClose()
         } catch {
             self.error = DashboardViewModel.map(error)
         }
     }
 }
 
-// MARK: - Leave calendar (GET /leave/calendar)
+// MARK: - Leave calendar (prototype calView; GET /leave/calendar)
 
-struct LeaveCalendarView: View {
-    @State private var month = Calendar.current.dateInterval(of: .month, for: Date())?.start ?? Date()
-    @State private var data: Loadable<LeaveCalendar> = .idle
+@MainActor
+@Observable
+final class MonthCalendarModel {
+    var month: Date = Calendar.current.dateInterval(of: .month, for: Date())?.start ?? Date()
+    private(set) var data: Loadable<LeaveCalendar> = .idle
     private let leave: LeaveService
 
     init(environment: AppEnvironment) { leave = environment.leave }
 
-    private var comps: (year: Int, month: Int) {
-        let c = Calendar.current.dateComponents([.year, .month], from: month)
-        return (c.year ?? 2026, c.month ?? 1)
-    }
-
-    var body: some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: Space.l) {
-                HStack {
-                    Button { shift(-1) } label: { Image(systemName: "chevron.left") }.accessibilityLabel("Previous month")
-                    Text(month.formatted(.dateTime.month(.wide).year())).font(Typo.title).frame(minWidth: 200)
-                    Button { shift(1) } label: { Image(systemName: "chevron.right") }.accessibilityLabel("Next month")
-                    Spacer()
-                    Button("Today") { month = Calendar.current.dateInterval(of: .month, for: Date())?.start ?? Date() }
-                }
-                LoadStateView(state: data, retry: { Task { await load() } }) { cal in
-                    HStack(spacing: Space.l) {
-                        StatTile(label: "Leave days this month", value: Format.days(cal.monthLeaveCount))
-                        StatTile(label: "Holidays", value: "\(cal.holidayCount)")
-                    }
-                    MonthGrid(month: month, days: cal.days)
-                    legend
-                }
-            }
-            .padding(Space.xl)
-            .frame(maxWidth: 980, alignment: .leading)
-        }
-        .task(id: month) { await load() }
-    }
-
-    private func shift(_ delta: Int) {
+    func shift(_ delta: Int) {
         if let d = Calendar.current.date(byAdding: .month, value: delta, to: month) { month = d }
     }
 
-    private func load() async {
+    func goToday() { month = Calendar.current.dateInterval(of: .month, for: Date())?.start ?? Date() }
+
+    func load() async {
+        let c = Calendar.current.dateComponents([.year, .month], from: month)
         data = .loading
-        do { data = .loaded(try await leave.calendar(year: comps.year, month: comps.month)) }
+        do { data = .loaded(try await leave.calendar(year: c.year ?? 2026, month: c.month ?? 1)) }
         catch { data = .failed(DashboardViewModel.map(error)) }
-    }
-
-    private var legend: some View {
-        HStack(spacing: Space.l) {
-            legendItem(Palette.accent, "Leave")
-            legendItem(Palette.warning, "Pending")
-            legendItem(Palette.info, "Holiday")
-            legendItem(Palette.textTertiary, "Weekend")
-        }
-        .font(Typo.caption)
-    }
-
-    private func legendItem(_ color: Color, _ text: String) -> some View {
-        HStack(spacing: Space.xs) { Circle().fill(color).frame(width: 8, height: 8); Text(text) }
     }
 }
 
+struct LeaveCalendarCard: View {
+    @Bindable var model: MonthCalendarModel
+    var showLeave = true
+
+    var body: some View {
+        Card {
+            HStack {
+                (Text(model.month.formatted(.dateTime.month(.wide))) + Text(" \(model.month.formatted(.dateTime.year()))").foregroundColor(Palette.textTertiary))
+                    .font(.system(size: 28))
+                Spacer()
+                Button("‹") { model.shift(-1) }.buttonStyle(.effi).accessibilityLabel("Previous month")
+                Button("Today") { model.goToday() }.buttonStyle(.effi)
+                Button("›") { model.shift(1) }.buttonStyle(.effi).accessibilityLabel("Next month")
+            }
+            .padding(.bottom, 2)
+            if showLeave {
+                HStack(spacing: 6) {
+                    EventChip(text: "● You · approved", kind: .me)
+                    EventChip(text: "● You · pending", kind: .pending)
+                    EventChip(text: "● Holiday", kind: .holiday)
+                }
+            }
+            LoadStateView(state: model.data, retry: { Task { await model.load() } }) { cal in
+                MonthGrid(month: model.month, days: cal.days, showLeave: showLeave)
+            }
+        }
+        .task(id: model.month) { await model.load() }
+    }
+}
+
+struct EventChip: View {
+    enum Kind { case me, pending, holiday }
+    let text: String
+    let kind: Kind
+
+    private var color: Color {
+        switch kind {
+        case .me: return Palette.accentText
+        case .pending: return Palette.warning
+        case .holiday: return Palette.success
+        }
+    }
+
+    var body: some View {
+        Text(text)
+            .font(.system(size: 10, weight: .medium))
+            .foregroundStyle(color)
+            .lineLimit(1)
+            .padding(.horizontal, 5).padding(.vertical, 1)
+            .background(color.opacity(0.2), in: RoundedRectangle(cornerRadius: 4, style: .continuous))
+    }
+}
+
+struct LeaveCalendarView: View {
+    @State private var model: MonthCalendarModel
+
+    init(environment: AppEnvironment) { _model = State(initialValue: MonthCalendarModel(environment: environment)) }
+
+    var body: some View {
+        Page {
+            LeaveCalendarCard(model: model)
+            if let cal = model.data.value {
+                EqualColumns(count: 2) {
+                    StatTile(label: "Leave days this month", value: Format.days(cal.monthLeaveCount))
+                    StatTile(label: "Holidays this month", value: "\(cal.holidayCount)")
+                }
+            }
+            Text("Team members' leave is not available to the desktop app yet.").font(Typo.caption).foregroundStyle(Palette.textTertiary)
+        }
+    }
+}
+
+/// `.cal` — 7 columns, 4 pt gap, weekday headers, day cells (min 74, radius 8).
 struct MonthGrid: View {
     let month: Date
     let days: [LeaveCalendarDay]
+    var showLeave = true
 
     private var leading: Int {
         let cal = Calendar.current
-        let firstWeekday = cal.component(.weekday, from: month)
-        return (firstWeekday - cal.firstWeekday + 7) % 7
+        return (cal.component(.weekday, from: month) - cal.firstWeekday + 7) % 7
     }
 
     private var symbols: [String] {
         let cal = Calendar.current
-        let all = cal.veryShortStandaloneWeekdaySymbols
+        let all = cal.shortStandaloneWeekdaySymbols
         let pivot = max(0, min(all.count, cal.firstWeekday - 1))
         return Array(all[pivot...]) + Array(all[..<pivot])
     }
 
-    private var columns: [GridItem] { Array(repeating: GridItem(.flexible(), spacing: Space.xs), count: 7) }
+    private var columns: [GridItem] { Array(repeating: GridItem(.flexible(), spacing: 4), count: 7) }
 
     var body: some View {
-        LazyVGrid(columns: columns, spacing: Space.xs) {
+        LazyVGrid(columns: columns, spacing: 4) {
             ForEach(Array(symbols.enumerated()), id: \.offset) { _, s in
-                Text(s).font(Typo.overline).foregroundStyle(Palette.textSecondary)
+                Text(s).font(.system(size: 10.5, weight: .semibold)).foregroundStyle(Palette.textTertiary).padding(4)
             }
-            ForEach(0..<leading, id: \.self) { _ in Color.clear.frame(height: 64) }
-            ForEach(days, id: \.date) { day in DayCell(day: day) }
+            ForEach(0..<leading, id: \.self) { _ in
+                RoundedRectangle(cornerRadius: Radius.row).fill(Palette.textPrimary.opacity(0.025)).frame(minHeight: 74).opacity(0.3)
+            }
+            ForEach(days, id: \.date) { day in DayCell(day: day, showLeave: showLeave) }
         }
     }
 }
 
 private struct DayCell: View {
     let day: LeaveCalendarDay
+    var showLeave = true
 
-    private var tint: Color? {
-        if day.isLeave { return LeaveStatus(rawValue: day.leaveStatus ?? "")?.isPending == true ? Palette.warning : Palette.accent }
-        if day.isHoliday { return Palette.info }
-        return nil
-    }
+    private var isToday: Bool { day.date == CalendarDate(Date()) }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: Space.xxs) {
-            Text("\(day.date.day)").font(Typo.bodyEmphasis)
-                .foregroundStyle(day.isWeekend ? Palette.textTertiary : Palette.textPrimary)
-            if let name = day.holidayName { Text(name).font(.system(size: 10)).lineLimit(2).foregroundStyle(Palette.info) }
-            if day.isLeave { Text(day.isHalfDay ? "Half day" : "Leave").font(.system(size: 10)).foregroundStyle(tint ?? Palette.accent) }
+        VStack(alignment: .leading, spacing: 3) {
+            Text("\(day.date.day)").font(.system(size: 11.5, design: .monospaced))
+                .foregroundStyle(isToday ? Palette.textPrimary : Palette.textTertiary)
+            if let name = day.holidayName, day.isHoliday { EventChip(text: name, kind: .holiday) }
+            if showLeave, day.isLeave {
+                let pending = LeaveStatus(rawValue: day.leaveStatus ?? "")?.isPending == true
+                EventChip(text: "You · \(day.isHalfDay ? "Half day" : (pending ? "Pending" : "Leave"))", kind: pending ? .pending : .me)
+            }
             Spacer(minLength: 0)
         }
-        .padding(Space.xs)
-        .frame(maxWidth: .infinity, minHeight: 64, alignment: .topLeading)
-        .background((tint ?? Palette.inset).opacity(tint == nil ? 1 : 0.14), in: RoundedRectangle(cornerRadius: Radius.row, style: .continuous))
+        .padding(6)
+        .frame(maxWidth: .infinity, minHeight: 74, alignment: .topLeading)
+        .background(Palette.textPrimary.opacity(day.isWeekend ? 0.01 : 0.025), in: RoundedRectangle(cornerRadius: Radius.row, style: .continuous))
+        .overlay(RoundedRectangle(cornerRadius: Radius.row, style: .continuous).strokeBorder(isToday ? Palette.accent : Palette.hairline, lineWidth: isToday ? 2 : 1))
         .accessibilityElement(children: .combine)
     }
 }
 
-// MARK: - Holidays (GET /leave/holidays, claim comp-off / apply leave)
+// MARK: - Holidays (prototype V.holidays: list 1 : calendar 1.4)
 
 struct HolidaysView: View {
     @State private var year = Calendar.current.component(.year, from: Date())
     @State private var holidays: Loadable<[Holiday]> = .idle
+    @State private var calendarModel: MonthCalendarModel
     @State private var actionError: AppError?
     @State private var actionMessage: String?
     @State private var working: UUID?
     private let leave: LeaveService
 
-    init(environment: AppEnvironment) { leave = environment.leave }
+    init(environment: AppEnvironment) {
+        leave = environment.leave
+        _calendarModel = State(initialValue: MonthCalendarModel(environment: environment))
+    }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: Space.m) {
-            HStack {
-                Stepper("Year \(year.formatted(.number.grouping(.never)))", value: $year, in: 2020...2100)
-                Spacer()
-                if let actionMessage { Label(actionMessage, systemImage: "checkmark.circle").foregroundStyle(Palette.success).font(Typo.caption) }
-            }
-            .padding([.horizontal, .top], Space.xl)
-            LoadStateView(state: holidays, emptyTitle: "No holidays", emptyMessage: "Your organisation hasn't published holidays for this year.",
-                          emptySymbol: "sun.max", isEmpty: { $0.isEmpty }, retry: { Task { await load() } }) { items in
-                Table(items) {
-                    TableColumn("Date") { h in Text(h.date.date()?.formatted(.dateTime.weekday(.abbreviated).day().month(.abbreviated)) ?? h.date.description) }
-                        .width(120)
-                    TableColumn("Holiday") { h in
-                        VStack(alignment: .leading, spacing: 0) {
-                            Text(h.name).font(Typo.bodyEmphasis)
-                            if let d = h.description, !d.isEmpty { Text(d).font(Typo.caption).foregroundStyle(Palette.textSecondary) }
-                        }
-                    }
-                    TableColumn("Status") { h in
-                        if h.userCompoffClaimed == true { StatusPill(text: "Comp-off claimed", tone: .success) }
-                        else if h.userLeaveApplied == true { StatusPill(text: "Leave applied", tone: .info) }
-                        else if h.date < CalendarDate(Date()) { StatusPill(text: "Past", tone: .neutral) }
-                        else { StatusPill(text: "Upcoming", tone: .accent) }
-                    }
-                    .width(150)
-                    TableColumn("") { h in
-                        if working == h.id { ProgressView().controlSize(.small) }
-                        else if h.userCompoffClaimed != true && h.userLeaveApplied != true {
-                            Menu("Actions") {
-                                Button("Claim Comp-off (worked this day)") { Task { await act(h, compOff: true) } }
-                                Button("Apply Leave for This Holiday") { Task { await act(h, compOff: false) } }
+        Page {
+            FractionalColumns(ratio: 1 / 1.4) {
+                Card("\(year.formatted(.number.grouping(.never))) holidays",
+                     trailing: AnyView(HStack(spacing: 4) {
+                         Button("‹") { year -= 1 }.buttonStyle(.effi)
+                         Button("›") { year += 1 }.buttonStyle(.effi)
+                     })) {
+                    if let actionMessage { Text(actionMessage).font(Typo.caption).foregroundStyle(Palette.success) }
+                    LoadStateView(state: holidays, emptyTitle: "No holidays", emptyMessage: "Your organisation hasn't published holidays for this year.",
+                                  emptySymbol: "sun.max", isEmpty: { $0.isEmpty }, retry: { Task { await load() } }) { items in
+                        VStack(spacing: 0) {
+                            ForEach(Array(items.enumerated()), id: \.element.id) { index, h in
+                                ListItemRow(title: h.name, subtitle: h.description, bold: true, showsDivider: index < items.count - 1) {
+                                    DateBlock(date: h.date.date() ?? Date())
+                                } trailing: {
+                                    holidayTrailing(h)
+                                }
                             }
-                            .controlSize(.small)
-                            .fixedSize()
                         }
                     }
-                    .width(110)
                 }
+                LeaveCalendarCard(model: calendarModel, showLeave: false)
             }
         }
         .task(id: year) { await load() }
         .alert("Action failed", isPresented: Binding(get: { actionError != nil }, set: { if !$0 { actionError = nil } }),
                presenting: actionError) { _ in Button("OK", role: .cancel) {} } message: { Text($0.userMessage) }
+    }
+
+    @ViewBuilder
+    private func holidayTrailing(_ h: Holiday) -> some View {
+        if working == h.id {
+            ProgressView().controlSize(.small)
+        } else if h.userCompoffClaimed == true {
+            Pill(text: "Comp-off claimed", kind: .vio)
+        } else if h.userLeaveApplied == true {
+            Pill(text: "Leave applied", kind: .blue)
+        } else {
+            HStack(spacing: 6) {
+                Pill(text: h.date < CalendarDate(Date()) ? "Past" : "Holiday", kind: h.date < CalendarDate(Date()) ? .gray : .ok)
+                Menu {
+                    Button("Claim Comp-off (I worked this day)") { Task { await act(h, compOff: true) } }
+                    Button("Apply Leave for This Holiday") { Task { await act(h, compOff: false) } }
+                } label: { Image(systemName: "ellipsis") }
+                .menuStyle(.borderlessButton)
+                .menuIndicator(.hidden)
+                .fixedSize()
+                .accessibilityLabel("Holiday actions")
+            }
+        }
     }
 
     private func load() async {
@@ -476,58 +637,113 @@ struct HolidaysView: View {
     }
 }
 
-// MARK: - Leave balance (GET /leave/balance + /leave/policy/me)
+// MARK: - Leave balance (prototype V.balance; GET /leave/balance + /leave/policy/me)
 
 struct LeaveBalanceView: View {
-    @State private var year = Calendar.current.component(.year, from: Date())
+    @Environment(AppModel.self) private var model
     @State private var balance: Loadable<LeaveBalance> = .idle
     @State private var policy: EffectiveLeavePolicy?
+    @State private var pending: [LeaveApplication] = []
     private let leave: LeaveService
+    private let year = Calendar.current.component(.year, from: Date())
 
     init(environment: AppEnvironment) { leave = environment.leave }
 
+    private struct Row: Identifiable {
+        let id: String
+        let color: Color
+        let entitled: String
+        let used: String
+        let pending: String
+        let available: String
+        let utilisation: Double?
+    }
+
     var body: some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: Space.l) {
-                Stepper("Year \(year.formatted(.number.grouping(.never)))", value: $year, in: 2020...2100).frame(maxWidth: 220)
+        Page {
+            Card(padding: 6) {
                 LoadStateView(state: balance, retry: { Task { await load() } }) { b in
-                    LazyVGrid(columns: [GridItem(.adaptive(minimum: 200), spacing: Space.l)], spacing: Space.l) {
-                        StatTile(label: "Paid allocated", value: Format.days(b.paidAllocated))
-                        StatTile(label: "Paid used", value: Format.days(b.paidUsed))
-                        StatTile(label: "Paid remaining", value: Format.days(b.paidRemaining),
-                                 progress: b.paidAllocated.doubleValue > 0 ? (b.paidRemaining?.doubleValue ?? 0) / b.paidAllocated.doubleValue : nil)
-                        StatTile(label: "Carried forward", value: Format.days(b.carryForward))
-                        StatTile(label: "Unpaid used", value: Format.days(b.unpaidUsed))
-                        StatTile(label: "Comp-off earned", value: Format.days(b.compOffBalance))
-                        StatTile(label: "Comp-off used", value: Format.days(b.compOffUsed))
-                        StatTile(label: "Comp-off remaining", value: Format.days(b.compOffRemaining))
-                        StatTile(label: "Total leave taken", value: Format.days(b.totalLeaveTaken))
-                        if let h = b.holidaysInYear { StatTile(label: "Holidays this year", value: "\(h)") }
+                    EffiTable<Row>(rows: rows(b), columns: [
+                        .init("Leave type") { r in
+                            HStack(spacing: 8) { Circle().fill(r.color).frame(width: 8, height: 8); Text(r.id).font(Typo.bodyEmphasis) }
+                        },
+                        .init("Entitled", width: 90) { r in Text(r.entitled).font(Typo.mono) },
+                        .init("Used", width: 80) { r in Text(r.used).font(Typo.mono) },
+                        .init("Pending", width: 80) { r in Text(r.pending).font(Typo.mono) },
+                        .init("Available", width: 90) { r in Text(r.available).font(.system(size: 13, weight: .bold, design: .monospaced)) },
+                        .init("Utilisation", width: 220) { r in
+                            if let u = r.utilisation { ProgressBar(value: u, tint: r.color) } else { Text("—").foregroundStyle(Palette.textTertiary) }
+                        },
+                    ])
+                }
+            }
+            EqualColumns(count: 2) {
+                Card("This year") {
+                    if let b = balance.value {
+                        VStack(alignment: .leading, spacing: 8) {
+                            SetRowLite("Total leave taken", "\(Format.days(b.totalLeaveTaken)) days")
+                            SetRowLite("Carried forward", "\(Format.days(b.carryForward)) days")
+                            if let h = b.holidaysInYear { SetRowLite("Holidays", "\(h)") }
+                            if let reserved = b.holidayReserved { SetRowLite("Reserved for holidays", "\(Format.days(reserved)) days") }
+                        }
+                    } else {
+                        Text("—").foregroundStyle(Palette.textTertiary)
                     }
                 }
-                if let policy {
-                    Card("Your policy", subtitle: policy.hasUserOverride ? "Includes a personal override" : (policy.hasGroupOverride ? "Includes a group override" : nil)) {
-                        Grid(alignment: .leading, horizontalSpacing: Space.xl, verticalSpacing: Space.s) {
-                            GridRow { Text("Paid leave per year").foregroundStyle(Palette.textSecondary); Text("\(policy.paidLeaveDaysPerYear) days") }
-                            GridRow { Text("Weekly hours required").foregroundStyle(Palette.textSecondary); Text("\(Format.days(policy.weeklyRequiredHours)) h") }
-                            GridRow { Text("Working days per week").foregroundStyle(Palette.textSecondary); Text("\(policy.weeklyWorkingDays)") }
-                            GridRow { Text("Daily minimum").foregroundStyle(Palette.textSecondary); Text("\(Format.days(policy.dailyMinHours)) h") }
-                            if let limit = policy.monthlyLeaveLimit { GridRow { Text("Monthly leave limit").foregroundStyle(Palette.textSecondary); Text("\(Format.days(limit)) days") } }
-                            if let carry = policy.carryForwardLimit { GridRow { Text("Carry-forward limit").foregroundStyle(Palette.textSecondary); Text("\(carry) days") } }
+                Card("Policy notes") {
+                    if let policy {
+                        VStack(alignment: .leading, spacing: 4) {
+                            Text("• \(policy.paidLeaveDaysPerYear) paid leave days per year.")
+                            if let carry = policy.carryForwardLimit { Text("• Up to \(carry) unused days carry forward.") }
+                            if let limit = policy.monthlyLeaveLimit { Text("• At most \(Format.days(limit)) leave days per month.") }
+                            Text("• \(Format.days(policy.weeklyRequiredHours)) hours required per week over \(policy.weeklyWorkingDays) working days.")
+                            if policy.hasUserOverride || policy.hasGroupOverride { Text("• Includes a \(policy.hasUserOverride ? "personal" : "group") override.") }
                         }
-                        .font(Typo.body)
+                        .font(Typo.body).foregroundStyle(Palette.textSecondary).lineSpacing(5)
+                    } else {
+                        Text("Policy unavailable.").font(Typo.body).foregroundStyle(Palette.textTertiary)
                     }
                 }
             }
-            .padding(Space.xl)
-            .frame(maxWidth: 1000, alignment: .leading)
         }
-        .task(id: year) { await load() }
-        .task { policy = try? await leave.myPolicy() }
+        .task { await load() }
+    }
+
+    private func rows(_ b: LeaveBalance) -> [Row] {
+        let pendingDays = pending.reduce(Decimal(0)) { $0 + $1.durationDays.value }
+        func ratio(_ used: FlexibleDecimal, _ total: FlexibleDecimal) -> Double? {
+            total.doubleValue > 0 ? used.doubleValue / total.doubleValue : nil
+        }
+        return [
+            Row(id: "Paid", color: Palette.accent, entitled: Format.days(b.paidAllocated), used: Format.days(b.paidUsed),
+                pending: Format.days(FlexibleDecimal(pendingDays)), available: Format.days(b.paidRemaining), utilisation: ratio(b.paidUsed, b.paidAllocated)),
+            Row(id: "Comp-off", color: Palette.okFill, entitled: Format.days(b.compOffBalance), used: Format.days(b.compOffUsed),
+                pending: "—", available: Format.days(b.compOffRemaining), utilisation: ratio(b.compOffUsed, b.compOffBalance)),
+            Row(id: "Unpaid", color: Palette.violetFill, entitled: "—", used: Format.days(b.unpaidUsed), pending: "—", available: "—", utilisation: nil),
+        ]
     }
 
     private func load() async {
         balance = .loading
         do { balance = .loaded(try await leave.balance(year: year)) } catch { balance = .failed(DashboardViewModel.map(error)) }
+        policy = try? await leave.myPolicy()
+        pending = (try? await leave.applications(userId: model.user?.id, pageSize: 200).items.filter { $0.statusValue?.isPending == true }) ?? []
+    }
+}
+
+/// Compact label/value row inside a card.
+struct SetRowLite: View {
+    let label: String
+    let value: String
+    init(_ label: String, _ value: String) {
+        self.label = label
+        self.value = value
+    }
+    var body: some View {
+        HStack {
+            Text(label).font(Typo.body).foregroundStyle(Palette.textSecondary)
+            Spacer()
+            Text(value).font(Typo.mono)
+        }
     }
 }

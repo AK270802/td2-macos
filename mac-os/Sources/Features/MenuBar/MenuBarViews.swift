@@ -2,7 +2,8 @@ import AppKit
 import SwiftUI
 import EffiLensKit
 
-/// Menu-bar label: compact live timer with a state dot (prototype menu-bar extra).
+/// Menu-bar label (prototype `.mb-extra`): state dot + mono timer while a
+/// session exists, otherwise the timer glyph.
 struct MenuBarLabel: View {
     @Environment(AppModel.self) private var model
     var showsTimer = true
@@ -10,8 +11,8 @@ struct MenuBarLabel: View {
     var body: some View {
         if showsTimer, let state = model.timerState, state.state != .idle {
             HStack(spacing: 4) {
-                Image(systemName: state.state == .running ? "record.circle.fill" : "pause.circle.fill")
-                Text(Format.clock(state.elapsedSecs)).monospacedDigit()
+                Image(systemName: state.state == .running ? "circle.fill" : "pause.circle")
+                Text(Format.clock(state.elapsedSecs)).font(.system(size: 12, design: .monospaced)).monospacedDigit()
             }
         } else {
             Image(systemName: "timer")
@@ -19,77 +20,148 @@ struct MenuBarLabel: View {
     }
 }
 
-/// Menu-bar popover (prototype: 330 pt popover with timer, quick stats, actions).
+/// Menu-bar popover (prototype `#popover`, 330 pt): header with connection
+/// pill, timer card, Today / Leave-left cards, recent tasks, menu rows.
 struct MenuBarPopover: View {
     @Environment(AppModel.self) private var model
     @Environment(\.openWindow) private var openWindow
+    @State private var stats: AgentLocalTimeStats?
+    @State private var leaveLeft: String?
+    @State private var recent: [TaskChoice] = []
 
     var body: some View {
-        VStack(alignment: .leading, spacing: Space.m) {
-            HStack(spacing: Space.s) {
-                BrandMark(size: 22)
-                Text("EffiLens").font(Typo.heading)
+        VStack(alignment: .leading, spacing: 0) {
+            HStack(spacing: 8) {
+                AppIconTile(size: 22)
+                Text("EffiLens").font(Typo.bodyEmphasis)
                 Spacer()
-                SyncIndicator()
+                connectionPill
             }
 
-            timerCard
+            timerCard.padding(.top, 12)
 
-            Divider()
+            if model.phase == .ready {
+                EqualColumns(count: 2, spacing: 8) {
+                    smallCard("Today", stats.map { Format.duration($0.workedTodaySec) } ?? "—")
+                    smallCard("Leave left", leaveLeft ?? "—")
+                }
+                .padding(.top, 10)
 
-            Button("Open Dashboard…") {
-                openWindow(id: SceneID.main)
-                NSApp.activate(ignoringOtherApps: true)
+                if !recent.isEmpty {
+                    Text("Recent tasks").font(Typo.small).foregroundStyle(Palette.textTertiary).padding(.top, 12).padding(.bottom, 4)
+                    ForEach(recent) { choice in
+                        menuRow(choice.task.name, dot: IdentityColor.color(for: choice.project.id)) { model.track(choice) }
+                            .disabled(!model.isAgentConnected)
+                    }
+                }
+            } else {
+                Text("Sign in from the main window to start tracking.").font(Typo.caption).foregroundStyle(Palette.textSecondary).padding(.top, 10)
             }
-            .keyboardShortcut("o")
-            Button("Show Mini Timer") { openWindow(id: SceneID.miniTimer) }
-            SettingsLink { Text("Settings…") }
-                .keyboardShortcut(",")
+
             if let error = model.agentCommandError {
-                Label(error.userMessage, systemImage: "exclamationmark.triangle")
-                    .font(Typo.caption).foregroundStyle(Palette.warning)
+                Text(error.userMessage).font(Typo.caption).foregroundStyle(Palette.warning).padding(.top, 8)
             }
-            if model.phase != .ready {
-                Text("Sign in from the main window to start tracking.").font(Typo.caption).foregroundStyle(Palette.textSecondary)
-            }
-            Divider()
-            Button("Quit EffiLens") { NSApp.terminate(nil) }
-                .keyboardShortcut("q")
+
+            Divider().overlay(Palette.hairline).padding(.vertical, 8)
+            menuRow("Open Dashboard…") { open(.dashboard) }
+            menuRow("Apply for Leave…") { open(.applyLeave) }.disabled(model.phase != .ready)
+            menuRow("Toggle Mini Timer") { openWindow(id: SceneID.miniTimer) }
+            SettingsLink { menuLabel("Settings…") }.buttonStyle(.plain)
+            menuRow("Quit EffiLens") { NSApp.terminate(nil) }
         }
-        .buttonStyle(.plain)
-        .padding(Space.l)
+        .padding(14)
         .frame(width: 330)
+        .task { await loadExtras() }
     }
 
-    @ViewBuilder
-    private var timerCard: some View {
-        if let state = model.timerState {
-            VStack(alignment: .leading, spacing: Space.s) {
-                Text(Format.clock(state.elapsedSecs))
-                    .font(.system(size: 34, weight: .medium, design: .monospaced))
-                    .monospacedDigit()
-                Text(state.task?.taskName ?? "No task selected")
-                    .font(Typo.body).foregroundStyle(Palette.textSecondary).lineLimit(1)
-                HStack {
-                    Button(state.state == .running ? "Pause" : "Start") {
-                        Task { await model.runAgent { try await $0.togglePlayPause() } }
-                    }
-                    .buttonStyle(.borderedProminent)
-                    Button("Stop") {
-                        Task { await model.runAgent { try await $0.stopTracking() } }
-                    }
-                    .buttonStyle(.bordered)
-                    .disabled(state.state == .idle)
-                }
+    private var connectionPill: some View {
+        Group {
+            switch model.agentLink {
+            case .connected:
+                if model.syncStatus?.connected == false { Pill(text: "Offline", kind: .no) } else { Pill(text: "Connected", kind: .ok) }
+            case .legacyConflict: Pill(text: "Legacy app running", kind: .wait)
+            case .unavailable, .unknown: Pill(text: "Agent offline", kind: .gray)
             }
-            .padding(Space.m)
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .background(Palette.inset, in: RoundedRectangle(cornerRadius: Radius.card, style: .continuous))
-        } else {
-            Label(model.agentLink == .legacyConflict ? "Older EffiLens app is running" : "Tracking agent offline",
-                  systemImage: "bolt.horizontal.circle")
-                .font(Typo.body)
-                .foregroundStyle(Palette.textSecondary)
         }
+    }
+
+    private var timerCard: some View {
+        let state = model.timerState
+        let running = state?.state == .running
+        return Card(padding: 18) {
+            VStack(spacing: 2) {
+                Text(Format.clock(state?.elapsedSecs ?? 0)).font(Typo.timerMedium).monospacedDigit()
+                Text(state?.task?.taskName ?? (model.isAgentConnected ? "No task selected" : "Tracking agent offline"))
+                    .font(Typo.caption).foregroundStyle(Palette.textTertiary).lineLimit(1)
+                HStack(spacing: 8) {
+                    Button {
+                        Task { await model.runAgent { try await $0.togglePlayPause() } }
+                    } label: {
+                        Label(running ? "Pause" : "Start", systemImage: running ? "pause.fill" : "play.fill")
+                    }
+                    .buttonStyle(.effiButton(running ? .normal : .primary))
+                    .disabled(state?.task == nil)
+                    Button("Stop") { Task { await model.runAgent { try await $0.stopTracking() } } }
+                        .buttonStyle(.effi)
+                        .disabled(state == nil || state?.state == .idle)
+                }
+                .padding(.top, 12)
+                .disabled(!model.isAgentConnected)
+            }
+            .frame(maxWidth: .infinity)
+        }
+    }
+
+    private func smallCard(_ label: String, _ value: String) -> some View {
+        Card(padding: 10) {
+            VStack(alignment: .leading, spacing: 2) {
+                Text(label).font(.system(size: 10.5)).foregroundStyle(Palette.textTertiary)
+                Text(value).font(.system(size: 13, weight: .bold, design: .monospaced))
+            }
+        }
+    }
+
+    private func menuLabel(_ title: String, dot: Color? = nil) -> some View {
+        HStack(spacing: 9) {
+            if let dot { Circle().fill(dot).frame(width: 7, height: 7) }
+            Text(title).font(Typo.body).foregroundStyle(Palette.textPrimary).lineLimit(1)
+            Spacer()
+        }
+        .padding(.vertical, 5)
+        .padding(.horizontal, 10)
+        .contentShape(Rectangle())
+    }
+
+    private func menuRow(_ title: String, dot: Color? = nil, action: @escaping () -> Void) -> some View {
+        Button(action: action) { menuLabel(title, dot: dot) }
+            .buttonStyle(MenuRowButtonStyle())
+    }
+
+    private func open(_ route: Route) {
+        model.requestedRoute = route
+        openWindow(id: SceneID.main)
+        NSApp.activate(ignoringOtherApps: true)
+    }
+
+    private func loadExtras() async {
+        guard model.phase == .ready, let environment = model.environment else { return }
+        if model.isAgentConnected { stats = try? await environment.agent?.localTimeStats() }
+        if let b = try? await environment.leave.balance() {
+            leaveLeft = "\(Format.days(FlexibleDecimal((b.paidRemaining?.value ?? 0) + (b.compOffRemaining?.value ?? 0)))) days"
+        }
+        if let projects = try? await environment.work.assignedProjects() {
+            recent = Array(TaskChoice.all(projects).prefix(3))
+        }
+    }
+}
+
+private struct MenuRowButtonStyle: ButtonStyle {
+    @State private var hovering = false
+    @Environment(\.isEnabled) private var isEnabled
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .background(hovering && isEnabled ? Palette.textPrimary.opacity(0.06) : .clear, in: RoundedRectangle(cornerRadius: Radius.control, style: .continuous))
+            .onHover { hovering = $0 }
+            .opacity(isEnabled ? 1 : 0.4)
     }
 }

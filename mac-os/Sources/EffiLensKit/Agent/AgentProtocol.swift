@@ -188,3 +188,23 @@ public struct AgentBreakPayload: Encodable, Sendable {
         self.durationSecs = durationSecs
     }
 }
+
+/// One locally recorded activity event (`common::models::ActivityEvent`),
+/// reduced to the fields the Activity timeline shows. `payload` (app names,
+/// window titles, domains) is intentionally not decoded.
+public struct AgentRecentEvent: Decodable, Sendable, Hashable, Identifiable {
+    public let eventUuid: UUID
+    public let eventType: String
+    public let ts: Int64
+    public let durationSec: Int64
+
+    public var id: UUID { eventUuid }
+    public var date: Date { Date(timeIntervalSince1970: TimeInterval(ts)) }
+
+    public init(eventUuid: UUID, eventType: String, ts: Int64, durationSec: Int64) {
+        self.eventUuid = eventUuid
+        self.eventType = eventType
+        self.ts = ts
+        self.durationSec = durationSec
+    }
+}
