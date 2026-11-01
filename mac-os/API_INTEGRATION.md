@@ -6,6 +6,15 @@ Base: `{origin}/api/v1` · JSON · snake_case. Verified against `core-services/a
 **Common errors:** 400/422 `{"detail": str | [{loc,msg}]}` → `AppError.validation` · 401 → one refresh + retry, then sign-out · 403 + `X-Password-Change-Required: true` → password flow · 403 → forbidden · 404 · 409 conflict · 429 `Retry-After` · 5xx.
 **Retry:** UI client retries idempotent requests (GET/PUT/DELETE + flagged POSTs) on offline/429/5xx — 2 retries, 0.8 s base, ≤6 s, jitter. Non-idempotent writes are never auto-retried. Background sync retry belongs to the Rust agent.
 
+## Environments
+
+| Environment | Portal (web) | Backend API (native app + Rust agent) | Prefix |
+|---|---|---|---|
+| Development (default) | `https://dev-workpulse.baseel.com` | `https://dev-workpulse-api.baseel.com` | `/api/v1` (`app/api/v1/__init__.py`) |
+| Production | not configured — must stay separate; never used for development testing | | |
+
+Configured in `project.yml` (`EFFILENS_API_BASE_URL`, `EFFILENS_PORTAL_URL` → Info.plist), overridable via `UserDefaults` key `effilens.serverOverride` (HTTPS only, loopback HTTP for local dev). The Rust agent receives the same API origin through `WORKPULSE_API_URL` in its LaunchAgent plist (`Scripts/embed-agent.sh`) — the same variable and default (`common/src/api/mod.rs`) the existing agent uses. API requests are never sent to the portal URL. No credentials are stored in source.
+
 ## Authentication
 
 | Method · path | Auth | Request | Response | Notes |

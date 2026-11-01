@@ -93,3 +93,21 @@ No data migration from the legacy DB: unsynced legacy events must be flushed by 
 ## 8. Offline sync
 
 Unchanged agentd behaviour: 500-event batches, `task_time_logs` included, permanent 4xx dropped / transient retried. ⚠️ Audit risk: 401 during a batch is classified permanent → events marked synced. Native build fixes this under the feature flag by treating 401 as retryable after token refresh.
+
+## 9. Implementation status & deviations (Milestone 3, commit dbd4585+)
+
+Implemented behind `macos-native` (off by default). Files touched exactly as §2, plus:
+- `common/src/idle.rs` — native `tick()` reads event-tap counts (§3 "Input counts").
+- `common/src/capture/screenshot.rs` — split into `capture_active_window` (backend-specific) + shared `process_and_write`; default path unchanged in behaviour.
+- `agentd/src/main.rs`, `capture_loop.rs`, `sync_loop.rs` — **not modified**.
+
+Deviations from the plan (honest list):
+| Plan | Implemented | Reason |
+|---|---|---|
+| ScreenCaptureKit window capture | `CGWindowListCreateImage` for a single CGWindowID (window-only, still never full-screen) | ScreenCaptureKit is async Objective-C; calling it from Rust needs objc2 + blocks crates. Deprecated API works on macOS 14/15; migration to SCK tracked for M9 |
+| DB key in Keychain | 0600 file in `EffiLens/` (existing key_manager) | Same reason as the existing code comment: Keychain ACLs bind to code signature; daemon and app are separate binaries; revisit after Developer ID signing |
+| No subprocesses | Browser URL still via `osascript`, but only when a browser is frontmost and once per capture interval (30 s), not per second | Native Apple Events from Rust need objc; per-second `ioreg`/`osascript` calls are gone |
+| `getpeereid` | `tokio::net::UnixStream::peer_cred()` (uses getpeereid on macOS) | — |
+| flock | `std::fs::File::try_lock` (Rust ≥ 1.89) | No extra crates |
+
+IPC commands added: `set_session` (validates UUIDs, refuses an `api_base_url` different from the agent's own API, wipes the previous account's local data on account switch), `clear_session` (stop → `clear_local_activity_data` → forget token), `get_permissions`. The pre-existing `clear_local_data` command is unchanged.
