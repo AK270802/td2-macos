@@ -165,11 +165,11 @@ if [ -n "$ASSETS" ] && [ -f "$ASSETS/dmg-background.png" ] && command -v create-
   if create-dmg \
       --volname "EffiLens $VERSION" \
       --background "$STAGE/dmg-background.tiff" \
-      --window-pos 200 120 --window-size 620 400 \
-      --icon-size 104 --text-size 13 \
+      --window-pos 200 120 --window-size 620 428 \
+      --icon-size 96 --text-size 13 \
       --icon "EffiLens.app" 170 205 \
       --app-drop-link 450 205 \
-      --icon "Install EffiLens.pkg" 310 345 \
+      --icon "Install EffiLens.pkg" 310 318 \
       --hide-extension "EffiLens.app" --hide-extension "Install EffiLens.pkg" \
       --no-internet-enable \
       "$DMG" "$STAGE/dmgsrc" >/dev/null; then

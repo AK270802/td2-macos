@@ -1,19 +1,31 @@
 <!doctype html>
 <html><head><meta charset="utf-8"><style>
-  body { font: 13px -apple-system, "SF Pro Text", sans-serif; color: #141B2C; margin: 0; }
-  @media (prefers-color-scheme: dark) { body { color: #EEF2FA; } .dim { color: rgba(235,240,250,.6) !important; } }
+  /* Installer.app's web view: use tables (no flexbox) for reliable layout. */
+  body { font: 13px -apple-system, "Helvetica Neue", sans-serif; color: #141B2C; margin: 0; }
   h2 { font: 400 26px "New York", Georgia, serif; margin: 0 0 10px; }
-  p { line-height: 1.55; margin: 0 0 10px; }
-  .row { display: flex; gap: 12px; align-items: flex-start; margin-top: 12px; }
-  .ic { width: 28px; height: 28px; border-radius: 8px; display: inline-flex; align-items: center; justify-content: center; font-size: 15px; flex: none; }
-  .dim { color: rgba(20,27,44,.6); font-size: 12px; }
+  p { line-height: 1.55; margin: 0 0 14px; color: rgba(20,27,44,.68); }
+  .card { border-radius: 12px; background: #ffffff; border: 1px solid rgba(0,0,0,.07);
+          box-shadow: 0 8px 24px rgba(0,0,0,.06); padding: 6px 14px; }
+  table { border-collapse: collapse; width: 100%; }
+  td { padding: 7px 0; vertical-align: top; }
+  td.ic { width: 42px; }
+  .ic span { display: block; width: 28px; height: 28px; border-radius: 8px; text-align: center; line-height: 28px; font-size: 14px; }
+  b { display: block; }
+  .dim { color: rgba(20,27,44,.55); font-size: 12px; }
+  @media (prefers-color-scheme: dark) {
+    body { color: #EEF2FA; } p { color: rgba(235,240,250,.66); }
+    .card { background: rgba(255,255,255,.05); border-color: rgba(255,255,255,.1); }
+    .dim { color: rgba(235,240,250,.5); }
+  }
 </style></head><body>
   <h2>Welcome to the EffiLens Installer</h2>
   <p>You will be guided through the steps necessary to install EffiLens for macOS — the native time-tracking and leave-management companion for your team.</p>
-  <div class="row"><span class="ic" style="background:rgba(213,160,74,.18);color:#D5A04A">✓</span>
-    <div><b>Universal app</b><div class="dim">Optimised for Apple silicon and Intel · macOS 14 Sonoma or later</div></div></div>
-  <div class="row"><span class="ic" style="background:rgba(77,145,255,.18);color:#4D91FF">🔒</span>
-    <div><b>Development build</b><div class="dim">Ad-hoc signed — not yet signed with a Developer ID or notarised by Apple</div></div></div>
-  <div class="row"><span class="ic" style="background:rgba(53,201,160,.18);color:#35C9A0">▣</span>
-    <div><b>Menu bar &amp; mini timer</b><div class="dim">Track time without opening the full app</div></div></div>
+  <div class="card"><table>
+    <tr><td class="ic"><span style="background:rgba(213,160,74,.18);color:#D5A04A">✓</span></td>
+        <td><b>Universal app</b><span class="dim">Optimised for Apple silicon and Intel · macOS 14 Sonoma or later</span></td></tr>
+    <tr><td class="ic"><span style="background:rgba(77,145,255,.18);color:#4D91FF">⚿</span></td>
+        <td><b>Development build</b><span class="dim">Ad-hoc signed — not yet signed with a Developer ID or notarised by Apple</span></td></tr>
+    <tr><td class="ic"><span style="background:rgba(53,201,160,.18);color:#35C9A0">▭</span></td>
+        <td><b>Menu bar &amp; mini timer</b><span class="dim">Track time without opening the full app</span></td></tr>
+  </table></div>
 </body></html>
