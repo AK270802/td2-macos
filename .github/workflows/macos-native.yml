@@ -257,9 +257,9 @@ jobs:
   # ── 6. Universal packaging + installer validation ────────────────────
   package:
     name: 6 · DMG + PKG (universal, unsigned)
-    # Installers are paused during the UI fidelity milestone; run manually
-    # (workflow_dispatch → package: true) once the visual review is approved.
-    if: ${{ github.event_name == 'workflow_dispatch' && inputs.package }}
+    # Visual review approved (2026-11-02): installers build on every push to
+    # the feature branch, and on manual runs with package: true. Not on PRs.
+    if: ${{ github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && inputs.package) }}
     needs: build-app
     runs-on: macos-15
     timeout-minutes: 30
