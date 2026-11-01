@@ -397,7 +397,7 @@ struct AboutDiagnosticsView: View {
         Page(maxWidth: 680) {
             Card(padding: 30) {
                 VStack(spacing: 0) {
-                    AppIconTile(size: 104)
+                    BrandLogoTile(size: 104, glow: true)
                     Text("EffiLens").font(Typo.hero).padding(.top, 16)
                     Text("Version \(model.environment?.configuration.appVersion ?? "—") · Universal · development build (unsigned)")
                         .font(Typo.body).foregroundStyle(Palette.textSecondary)

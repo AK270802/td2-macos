@@ -19,10 +19,10 @@ struct ConsentView: View {
 
             HStack(alignment: .top, spacing: 12) {
                 Card("Records", symbol: "checkmark") {
-                    bulletList(["Work session start / stop", "Active app & window title", "Keyboard/mouse activity level (counts)", "Blurred screenshots of the active window, if your organisation enables them"], mark: "✓")
+                    bulletList(["Work session start / stop", "Active app & window title", "Activity level (counts only)", "Blurred window screenshots"], mark: "✓")
                 }
                 Card("Never records", symbol: "xmark") {
-                    bulletList(["What you type or passwords", "Full web addresses or page content", "Microphone or camera", "Anything when tracking is off"], mark: "✕")
+                    bulletList(["What you type or passwords", "Full web addresses", "Microphone or camera", "Anything when tracking is off"], mark: "✕")
                 }
             }
             .padding(.top, 14)
@@ -32,7 +32,7 @@ struct ConsentView: View {
                     Text(content).font(Typo.caption).foregroundStyle(Palette.textSecondary).textSelection(.enabled)
                         .frame(maxWidth: .infinity, alignment: .leading).padding(10)
                 }
-                .frame(maxHeight: 70)
+                .frame(height: 54)
                 .background(Palette.inset, in: RoundedRectangle(cornerRadius: Radius.row, style: .continuous))
                 .overlay(RoundedRectangle(cornerRadius: Radius.row, style: .continuous).strokeBorder(Palette.hairline))
                 .padding(.top, 10)
@@ -40,8 +40,8 @@ struct ConsentView: View {
 
             Toggle(isOn: $agreed) {
                 Text(consent.policyVersion == nil
-                     ? "Your organisation has not published a monitoring policy yet. Tracking stays disabled until one is available."
-                     : "I understand and consent to EffiLens recording work activity as described (policy v\(consent.policyVersion ?? 0)).")
+                     ? "No monitoring policy published yet — tracking stays off until there is one."
+                     : "I understand and consent to EffiLens recording work activity as described.")
                     .font(Typo.body).foregroundStyle(Palette.textSecondary)
                     .fixedSize(horizontal: false, vertical: true)
             }
@@ -81,7 +81,7 @@ struct ConsentView: View {
             ForEach(items, id: \.self) { item in
                 HStack(alignment: .firstTextBaseline, spacing: 7) {
                     Text(mark)
-                    Text(item).fixedSize(horizontal: false, vertical: true)
+                    Text(item).lineLimit(2)
                 }
                 .font(Typo.body)
                 .foregroundStyle(Palette.textSecondary)

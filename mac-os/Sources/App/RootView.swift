@@ -100,7 +100,7 @@ struct WindowConfigurator: NSViewRepresentable {
 private struct LaunchView: View {
     var body: some View {
         VStack(spacing: Space.l) {
-            AppIconTile(size: 72)
+            BrandLogoTile(size: 72, glow: true)
             ProgressView().controlSize(.small).tint(Palette.accent)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)

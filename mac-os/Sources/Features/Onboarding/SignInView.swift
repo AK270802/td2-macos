@@ -69,7 +69,7 @@ struct SignInView: View {
     var body: some View {
         OnboardingWindow {
             HStack(spacing: 10) {
-                AppIconTile(size: 44)
+                BrandLogoTile(size: 44)
                 VStack(alignment: .leading, spacing: 1) {
                     Text("EffiLens").font(.system(size: 15, weight: .bold)).foregroundStyle(Palette.textPrimary)
                     Text("Work, time & leave").font(Typo.caption).foregroundStyle(Palette.textTertiary)

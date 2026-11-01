@@ -383,3 +383,24 @@ struct AppIconTile: View {
             .accessibilityLabel("EffiLens")
     }
 }
+
+
+/// Official EffiLens logo (Effilens_Logo → BrandMark) on a white rounded
+/// tile — the artwork has a white background, so it is always presented
+/// this way on dark or tinted surfaces.
+struct BrandLogoTile: View {
+    var size: CGFloat = 44
+    var glow = false
+
+    var body: some View {
+        Image("BrandMark")
+            .resizable()
+            .interpolation(.high)
+            .scaledToFit()
+            .padding(size * 0.06)
+            .frame(width: size, height: size)
+            .background(Color.white, in: RoundedRectangle(cornerRadius: size * 0.23, style: .continuous))
+            .shadow(color: glow ? Palette.accent.opacity(0.45) : .black.opacity(0.25), radius: glow ? size * 0.3 : 4, y: glow ? 0 : 2)
+            .accessibilityLabel("EffiLens")
+    }
+}

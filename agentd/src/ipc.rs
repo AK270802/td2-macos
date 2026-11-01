@@ -260,13 +260,29 @@ mod native_cmds {
         drop(conn);
 
         // Pull config + assignments now instead of waiting for the sync cadence.
-        if let Ok(client) = common::api::build_client() {
-            if let Ok((_config, tasks, _identity)) = common::api::agent::get_config(&client).await {
-                if let Ok(conn) = db::open() {
-                    let _ = queries::upsert_assigned_tasks(&conn, &tasks);
-                }
-            }
+        // Uses the sync loop's own routine so the organisation's policy
+        // (screenshots on/off + interval, blur, idle threshold, sync
+        // intervals, retention) applies immediately after sign-in — not only
+        // the task list.
+        // rusqlite::Connection is !Sync, so the sync runs on a blocking
+        // thread with its own runtime (this handler's future must be Send).
+        let synced = tokio::task::spawn_blocking(|| -> anyhow::Result<()> {
+            let rt = tokio::runtime::Builder::new_current_thread().enable_all().build()?;
+            rt.block_on(async {
+                let client = common::api::build_client()?;
+                let conn = db::open()?;
+                crate::sync_loop::sync_config_and_assignments(&client, &conn).await
+            })
+        })
+        .await;
+        match synced {
+            Ok(Ok(())) => {}
+            Ok(Err(e)) => tracing::warn!("set_session: config sync deferred to the sync loop: {e}"),
+            Err(e) => tracing::warn!("set_session: config sync task failed: {e}"),
         }
+        // go-agent parity: upload anything queued right after authentication
+        // instead of waiting up to one batch interval (default 5 min).
+        let _ = crate::sync_loop::request_sync_now();
         IpcResponse::ok(serde_json::json!({"ok": true}))
     }
 

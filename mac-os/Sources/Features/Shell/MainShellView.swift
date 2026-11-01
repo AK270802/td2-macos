@@ -153,6 +153,15 @@ struct EffiSidebar: View {
                 .padding(.top, 46)
                 .padding(.horizontal, 10)
             }
+            .overlay(alignment: .topLeading) {
+                HStack(spacing: 6) {
+                    BrandLogoTile(size: 20)
+                    Text("EffiLens").font(.system(size: 13, weight: .semibold)).foregroundStyle(Palette.textSecondary)
+                }
+                .padding(.leading, 84)
+                .padding(.top, 10)
+                .allowsHitTesting(false)
+            }
             .scrollIndicators(.never)
             userCard
                 .padding(.horizontal, 10)

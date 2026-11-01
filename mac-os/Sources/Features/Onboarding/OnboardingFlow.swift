@@ -23,8 +23,9 @@ struct OnboardingWindow<Content: View>: View {
                 .padding(EdgeInsets(top: 54, leading: 44, bottom: 28, trailing: 44))
                 .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         }
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .frame(width: Metrics.onboardingWindow.width, height: Metrics.onboardingWindow.height)
         .background(GlassBackdrop())
+        .clipped()
         .ignoresSafeArea()
     }
 }
@@ -45,16 +46,10 @@ struct OnboardingArtPanel: View {
                 .background(Circle().stroke(Palette.accentHighlight.opacity(0.025), lineWidth: 180))
                 .frame(width: 520, height: 520)
                 .position(x: -120 + 260, y: 120 + 260)
-            // Orb (220 pt at 60, 150).
-            Circle()
-                .fill(RadialGradient(stops: [.init(color: Palette.accentHighlight, location: 0),
-                                             .init(color: Palette.accent, location: 0.45),
-                                             .init(color: Color(hex: 0x5A3A0E), location: 0.8)],
-                                     center: UnitPoint(x: 0.35, y: 0.3), startRadius: 0, endRadius: 150))
-                .frame(width: 220, height: 220)
-                .shadow(color: Palette.accent.opacity(0.45), radius: 60)
+            // Official logo where the prototype draws its orb (220 pt at 60, 150).
+            BrandLogoTile(size: 170, glow: true)
                 .position(x: 60 + 110, y: 150 + 110)
-                .offset(y: floating ? -14 : 0)
+                .offset(y: floating ? -10 : 0)
                 .animation(reduceMotion ? nil : .easeInOut(duration: 3).repeatForever(autoreverses: true), value: floating)
             VStack(alignment: .leading, spacing: 8) {
                 (Text("See your\n").font(Typo.serif(36))
@@ -175,12 +170,16 @@ final class SetupChecklist {
 
     var items: [Item]
     var allDone: Bool { items.allSatisfy { $0.state == .done } }
+    var firstFailure: String? {
+        for item in items { if case .failed(let message) = item.state { return message } }
+        return nil
+    }
     var anyFailed: Bool { items.contains { if case .failed = $0.state { return true } else { return false } } }
 
     init(deviceName: String) {
         items = [
             Item(id: 0, title: "Verifying organisation"),
-            Item(id: 1, title: "Registering device “\(deviceName)”"),
+            Item(id: 1, title: "Registering this Mac"),
             Item(id: 2, title: "Downloading tracking policy"),
             Item(id: 3, title: "Syncing projects & tasks"),
             Item(id: 4, title: "Fetching leave balances"),
@@ -230,13 +229,8 @@ struct SetupStepView: View {
                     ForEach(checklist.items) { item in
                         HStack(spacing: 10) {
                             statusIcon(item.state).frame(width: 18, height: 18)
-                            VStack(alignment: .leading, spacing: 1) {
-                                Text(item.title).font(Typo.body)
-                                    .foregroundStyle(item.state == .done ? Palette.textPrimary : Palette.textSecondary)
-                                if case .failed(let message) = item.state {
-                                    Text(message).font(Typo.small).foregroundStyle(Palette.danger)
-                                }
-                            }
+                            Text(item.title).font(Typo.body).lineLimit(1)
+                                .foregroundStyle(item.state == .done ? Palette.textPrimary : Palette.textSecondary)
                         }
                         .padding(.vertical, 7)
                     }
@@ -244,8 +238,11 @@ struct SetupStepView: View {
             }
             .padding(.top, 22)
 
-            Text("Device: \(DeviceInfo.name) · macOS \(DeviceInfo.osVersion) · \(DeviceInfo.chip)")
-                .font(Typo.caption).foregroundStyle(Palette.textTertiary).padding(.top, 12)
+            if let failure = checklist.firstFailure {
+                Text(failure).font(Typo.caption).foregroundStyle(Palette.danger).lineLimit(2).padding(.top, 10)
+            }
+            Text("macOS \(DeviceInfo.osVersion) · \(DeviceInfo.chip)")
+                .font(Typo.caption).foregroundStyle(Palette.textTertiary).lineLimit(1).padding(.top, 8)
 
             Spacer(minLength: 0)
             OnboardingFooter(step: .setup) {

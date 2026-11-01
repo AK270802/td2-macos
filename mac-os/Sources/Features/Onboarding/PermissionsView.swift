@@ -29,17 +29,17 @@ struct PermissionsList: View {
                     await refresh()
                 }
             }
-            PermissionRow(title: "Accessibility", detail: "Detect the active app and window title for accurate time", symbol: "hand.raised",
+            PermissionRow(title: "Accessibility", detail: "Detect the active app for accurate time", symbol: "hand.raised",
                           granted: model.permissions?.accessibility ?? local.accessibility) {
                 LocalPermissions.requestAccessibility()
                 LocalPermissions.openSettings(pane: "Privacy_Accessibility")
             }
-            PermissionRow(title: "Screen Recording", detail: "Optional — blurred active-window screenshots if your organisation enables them", symbol: "rectangle.dashed",
+            PermissionRow(title: "Screen Recording", detail: "Optional, for policy screenshots", symbol: "rectangle.dashed",
                           granted: model.permissions?.screenRecording ?? local.screenRecording) {
                 LocalPermissions.requestScreenRecording()
                 LocalPermissions.openSettings(pane: "Privacy_ScreenCapture")
             }
-            PermissionRow(title: "Input Monitoring", detail: "Counts keyboard and mouse activity — never what you type", symbol: "keyboard",
+            PermissionRow(title: "Input Monitoring", detail: "Activity counts — never what you type", symbol: "keyboard",
                           granted: model.permissions?.inputMonitoring ?? local.inputMonitoring) {
                 LocalPermissions.requestInputMonitoring()
                 LocalPermissions.openSettings(pane: "Privacy_ListenEvent")
@@ -50,7 +50,7 @@ struct PermissionsList: View {
                 model.restartAgentConnection()
                 if model.agentRegistration == .requiresApproval { AgentLifecycle.openLoginItemsSettings() }
             }
-            Text("Browser domains: macOS asks once per browser (Automation) the first time you track with it in front.")
+            Text("Browsers: macOS asks once per browser for website domains.")
                 .font(Typo.caption).foregroundStyle(Palette.textTertiary)
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .padding(.top, 2)
@@ -109,7 +109,7 @@ private struct PermissionRow: View {
             IconTile(symbol: symbol, tint: Palette.blueFill)
             VStack(alignment: .leading, spacing: 1) {
                 Text(title).font(Typo.bodyEmphasis).foregroundStyle(Palette.textPrimary)
-                Text(detail).font(Typo.caption).foregroundStyle(Palette.textTertiary).fixedSize(horizontal: false, vertical: true)
+                Text(detail).font(Typo.caption).foregroundStyle(Palette.textTertiary).lineLimit(1)
             }
             Spacer(minLength: Space.s)
             if granted {
@@ -120,7 +120,7 @@ private struct PermissionRow: View {
                 Pill(text: "Unavailable", kind: .gray)
             }
         }
-        .padding(.vertical, 11)
+        .padding(.vertical, 8)
         .padding(.horizontal, 12)
         .background(Palette.textPrimary.opacity(0.02), in: RoundedRectangle(cornerRadius: Radius.task, style: .continuous))
         .overlay(RoundedRectangle(cornerRadius: Radius.task, style: .continuous).strokeBorder(Palette.hairline))

@@ -41,7 +41,7 @@ struct MenuBarPopover: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
             HStack(spacing: 8) {
-                AppIconTile(size: 22)
+                BrandLogoTile(size: 22)
                 Text("EffiLens").font(Typo.bodyEmphasis)
                 Spacer()
                 connectionPill
