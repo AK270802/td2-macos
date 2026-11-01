@@ -1,0 +1,15 @@
+{
+  "user_id": "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee",
+  "year": 2026,
+  "paid_allocated": "18.00",
+  "paid_used": "4.50",
+  "unpaid_used": "0.00",
+  "comp_off_balance": "2",
+  "comp_off_used": "1",
+  "carry_forward": "3.00",
+  "holiday_reserved": "0.00",
+  "holidays_in_year": 12,
+  "total_leave_taken": "4.50",
+  "paid_remaining": "13.50",
+  "comp_off_remaining": "1"
+}

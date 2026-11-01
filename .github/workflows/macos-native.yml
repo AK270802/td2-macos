@@ -1,0 +1,194 @@
+# Native SwiftUI EffiLens macOS app (workpulse-rust/mac-os) + its Rust agent.
+# Independent of main.yml (Tauri). Triggers only on mac-os / Rust source changes.
+name: macos-native
+
+on:
+  push:
+    branches: [main, "feature/macos-native**"]
+    paths:
+      - "mac-os/**"
+      - "common/**"
+      - "agentd/**"
+      - "Cargo.toml"
+      - "Cargo.lock"
+      - ".github/workflows/macos-native.yml"
+  pull_request:
+    paths:
+      - "mac-os/**"
+      - "common/**"
+      - "agentd/**"
+      - ".github/workflows/macos-native.yml"
+  workflow_dispatch:
+    inputs:
+      release:
+        description: "Sign + notarise (requires Apple secrets)"
+        type: boolean
+        default: false
+
+concurrency:
+  group: macos-native-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  # ── Swift core package ──────────────────────────────────────────────
+  test-kit:
+    name: EffiLensKit build + tests
+    runs-on: macos-15
+    timeout-minutes: 30
+    defaults:
+      run:
+        working-directory: mac-os
+    steps:
+      - uses: actions/checkout@v4
+      - name: Toolchain versions
+        run: |
+          sw_vers
+          xcodebuild -version
+          swift --version
+      - name: swift build
+        run: swift build -c debug
+      - name: swift test
+        run: swift test --parallel --xunit-output "$RUNNER_TEMP/kit-tests.xml"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: kit-test-report
+          path: ${{ runner.temp }}/kit-tests*.xml
+
+  # ── Rust: regression (default features) + native agent ───────────────
+  # Only crates relevant to the native app are built here. `app/src-tauri`
+  # needs the Node frontend and is covered by main.yml, so the workspace-wide
+  # `cargo test --workspace` is intentionally not used.
+  rust:
+    name: Rust agent (default + macos-native)
+    runs-on: macos-15
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-apple-darwin,x86_64-apple-darwin
+      - uses: Swatinem/rust-cache@v2
+      - name: Versions
+        run: rustc --version && cargo --version
+      - name: Regression — common tests (default features)
+        run: cargo test -p common --locked
+      - name: Regression — agentd build (default features)
+        run: cargo build -p agentd --locked
+      - name: Native — common tests (macos-native)
+        run: |
+          if grep -q '^macos-native' common/Cargo.toml; then
+            cargo test -p common --features macos-native --locked
+          else
+            echo "macos-native feature not present yet — skipped"
+          fi
+      - name: Native — universal effilens-agentd
+        run: |
+          if grep -q '^macos-native' agentd/Cargo.toml; then
+            for t in aarch64-apple-darwin x86_64-apple-darwin; do
+              cargo build -p agentd --release --features macos-native --target $t --locked
+            done
+            mkdir -p "$RUNNER_TEMP/agent"
+            lipo -create \
+              target/aarch64-apple-darwin/release/agentd \
+              target/x86_64-apple-darwin/release/agentd \
+              -output "$RUNNER_TEMP/agent/effilens-agentd"
+            lipo -info "$RUNNER_TEMP/agent/effilens-agentd"
+          else
+            echo "macos-native feature not present yet — skipped"
+          fi
+      - uses: actions/upload-artifact@v4
+        with:
+          name: effilens-agentd-universal
+          path: ${{ runner.temp }}/agent/effilens-agentd
+          if-no-files-found: ignore
+
+  # ── App bundle ───────────────────────────────────────────────────────
+  build-app:
+    name: EffiLens.app (${{ matrix.configuration }})
+    needs: [test-kit, rust]
+    runs-on: macos-15
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        configuration: [Debug, Release]
+    defaults:
+      run:
+        working-directory: mac-os
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: effilens-agentd-universal
+          path: mac-os/build/agent
+        continue-on-error: true
+      - name: Install XcodeGen
+        run: brew install xcodegen
+      - name: Generate project
+        run: xcodegen generate --spec project.yml
+      - name: Build (unsigned)
+        run: |
+          set -o pipefail
+          xcodebuild \
+            -project EffiLens.xcodeproj \
+            -scheme EffiLens \
+            -configuration ${{ matrix.configuration }} \
+            -destination 'generic/platform=macOS' \
+            -derivedDataPath "$RUNNER_TEMP/dd" \
+            ARCHS="arm64 x86_64" ONLY_ACTIVE_ARCH=NO \
+            CODE_SIGN_IDENTITY=- CODE_SIGNING_REQUIRED=NO CODE_SIGNING_ALLOWED=NO \
+            build 2>&1 | tee "$RUNNER_TEMP/xcodebuild-${{ matrix.configuration }}.log"
+      - name: Package (zip, DMG, PKG — unsigned)
+        run: ./Scripts/package.sh "$RUNNER_TEMP/dd/Build/Products/${{ matrix.configuration }}/EffiLens.app" "$RUNNER_TEMP/out" "${{ matrix.configuration }}"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: EffiLens-${{ matrix.configuration }}-unsigned
+          path: ${{ runner.temp }}/out/*
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: xcodebuild-log-${{ matrix.configuration }}
+          path: ${{ runner.temp }}/xcodebuild-${{ matrix.configuration }}.log
+
+  release:
+    name: Sign + notarise
+    if: ${{ github.event_name == 'workflow_dispatch' && inputs.release }}
+    needs: build-app
+    runs-on: macos-15
+    timeout-minutes: 60
+    defaults:
+      run:
+        working-directory: mac-os
+    env:
+      APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Verify signing secrets exist
+        env:
+          CERT: ${{ secrets.MACOS_DEVELOPER_ID_APP_CERT_P12 }}
+          NOTARY_KEY: ${{ secrets.APPLE_NOTARY_API_KEY_P8 }}
+        run: |
+          if [ -z "$CERT" ] || [ -z "$NOTARY_KEY" ] || [ -z "$APPLE_TEAM_ID" ]; then
+            echo "::error::Release signing secrets are not configured. See mac-os/BUILD_AND_RELEASE.md."
+            exit 1
+          fi
+      - name: Install XcodeGen
+        run: brew install xcodegen
+      - name: Sign, package and notarise
+        env:
+          MACOS_DEVELOPER_ID_APP_CERT_P12: ${{ secrets.MACOS_DEVELOPER_ID_APP_CERT_P12 }}
+          MACOS_DEVELOPER_ID_APP_CERT_PASSWORD: ${{ secrets.MACOS_DEVELOPER_ID_APP_CERT_PASSWORD }}
+          MACOS_DEVELOPER_ID_INSTALLER_CERT_P12: ${{ secrets.MACOS_DEVELOPER_ID_INSTALLER_CERT_P12 }}
+          MACOS_DEVELOPER_ID_INSTALLER_CERT_PASSWORD: ${{ secrets.MACOS_DEVELOPER_ID_INSTALLER_CERT_PASSWORD }}
+          APPLE_NOTARY_API_KEY_P8: ${{ secrets.APPLE_NOTARY_API_KEY_P8 }}
+          APPLE_NOTARY_KEY_ID: ${{ secrets.APPLE_NOTARY_KEY_ID }}
+          APPLE_NOTARY_ISSUER_ID: ${{ secrets.APPLE_NOTARY_ISSUER_ID }}
+        run: ./Scripts/release.sh
+      - uses: actions/upload-artifact@v4
+        with:
+          name: EffiLens-release
+          path: mac-os/build/release/*

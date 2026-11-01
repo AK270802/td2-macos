@@ -1,0 +1,5 @@
+EffiLens.xcodeproj/
+build/
+.build/
+.swiftpm/
+DerivedData/
