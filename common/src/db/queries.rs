@@ -240,6 +240,28 @@ pub fn touch_domain(conn: &Connection, domain: &str) -> Result<()> {
     Ok(())
 }
 
+/// Wipe all locally cached activity data (task time, events, screenshots,
+/// the sync queue) on logout. `task_time_logs` carries no user/tenant column
+/// -- the local DB is a single file per OS-user profile, shared by whichever
+/// WorkPulse account is currently logged in -- so anything left behind here
+/// would be summed into (and eventually synced under) the NEXT account that
+/// logs in on this machine. Local data is a re-syncable cache, so wiping it
+/// on logout is safe: already-synced rows are already on the server, and
+/// unsynced rows belong to the account that's leaving.
+pub fn clear_local_activity_data(conn: &Connection) -> Result<()> {
+    let mut stmt = conn.prepare("SELECT file_path FROM screenshots")?;
+    let paths: Vec<String> = stmt.query_map([], |r| r.get(0))?.filter_map(|r| r.ok()).collect();
+    drop(stmt);
+    for p in paths {
+        let _ = std::fs::remove_file(&p);
+    }
+    conn.execute("DELETE FROM screenshots", [])?;
+    conn.execute("DELETE FROM events", [])?;
+    conn.execute("DELETE FROM task_time_logs", [])?;
+    conn.execute("DELETE FROM sync_queue", [])?;
+    Ok(())
+}
+
 /// Delete synced events, uploaded screenshot rows (and their files), and
 /// synced logs older than `days`.
 pub fn prune_old_data(conn: &Connection, days: i64) -> Result<()> {

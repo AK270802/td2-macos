@@ -22,8 +22,12 @@ pub async fn login(email: String, password: String) -> Result<serde_json::Value,
 
 #[command]
 pub async fn logout() -> Result<(), String> {
-    // Stop any running session first so the time log is written.
+    // Stop any running session first so the time log is written, then wipe
+    // the local activity cache -- it's a single DB file per OS-user profile,
+    // not per WorkPulse account, so leftover rows would otherwise leak into
+    // whichever account logs in next on this machine.
     let _ = common::ipc_transport::request("stop_tracking", None).await;
+    let _ = common::ipc_transport::request("clear_local_data", None).await;
     if let Ok(conn) = db::open() {
         let _ = queries::set_config(&conn, "user_id", "");
         let _ = queries::set_config(&conn, "tenant_id", "");

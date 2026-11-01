@@ -90,6 +90,15 @@ async fn handle_request(line: &str) -> IpcResponse {
             timer().lock().unwrap().stop(conn);
             Ok(serde_json::json!({"ok": true}))
         }),
+        // Called on logout, after stop_tracking: the local DB is a single
+        // file per OS-user profile shared by whichever WorkPulse account is
+        // currently logged in, so leftover rows here would otherwise leak
+        // into (and get synced under) the next account that logs in.
+        "clear_local_data" => with_conn(|conn| {
+            queries::clear_local_activity_data(conn)?;
+            *timer().lock().unwrap() = TimerService::new();
+            Ok(serde_json::json!({"ok": true}))
+        }),
         "idle_keep_working" => idle_response(false),
         "idle_auto_stop" => idle_response(true),
         "get_assigned_tasks" => with_conn(|conn| {
