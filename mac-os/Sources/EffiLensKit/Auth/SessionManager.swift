@@ -89,6 +89,7 @@ public actor SessionManager: CredentialProvider {
         try secrets.write(refresh, for: .portalRefreshToken)
         try secrets.write(agent.accessToken, for: .agentToken)
         try? secrets.write(body.email, for: .lastEmail)
+        try? secrets.write(agent.tenantId.uuidString, for: .tenantId)
         setPortalAccess(token)
 
         Log.auth.info("signed in")
@@ -116,6 +117,12 @@ public actor SessionManager: CredentialProvider {
     }
 
     public var lastEmail: String? { try? secrets.read(.lastEmail) }
+
+    /// Tenant of the signed-in account (from the agent login response).
+    public var tenantId: UUID? {
+        guard let raw = try? secrets.read(.tenantId) else { return nil }
+        return UUID(uuidString: raw)
+    }
 
     /// The agent token, for handing to the local Rust agent over IPC.
     public func agentTokenForDaemon() -> String? { try? secrets.read(.agentToken) }
@@ -228,6 +235,7 @@ public actor SessionManager: CredentialProvider {
         portalAccessExpiry = nil
         try? secrets.delete(.portalRefreshToken)
         try? secrets.delete(.agentToken)
+        try? secrets.delete(.tenantId)
     }
 
     private func decode<T: Decodable>(_ type: T.Type, _ data: Data, path: String) throws -> T {

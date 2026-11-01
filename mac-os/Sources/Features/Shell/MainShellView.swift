@@ -16,6 +16,7 @@ struct MainShellView: View {
             detail(for: selection ?? .dashboard)
                 .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
                 .background(Palette.canvas)
+                .safeAreaInset(edge: .top, spacing: 0) { PermissionsBanner() }
                 .navigationTitle((selection ?? .dashboard).title)
                 .toolbar { ShellToolbar(unread: model.unreadNotifications, selection: $selection) }
         }

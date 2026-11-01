@@ -20,6 +20,8 @@ public enum SecretKey: String, CaseIterable, Sendable {
     case agentToken = "agent.token"
     /// Last signed-in email (not secret, but kept with the account for convenience).
     case lastEmail = "account.email"
+    /// Tenant of the agent session (needed for the daemon hand-off after restart).
+    case tenantId = "account.tenant"
 }
 
 public struct KeychainStore: SecretStore {

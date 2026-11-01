@@ -30,6 +30,8 @@ final class AppModel {
     private(set) var user: UserOut?
     private(set) var agentLink: AgentLink = .unknown
     private(set) var syncStatus: AgentSyncStatus?
+    private(set) var permissions: AgentPermissions?
+    private(set) var agentRegistration: AgentLifecycle.Registration?
     var unreadNotifications = 0
 
     let environment: AppEnvironment?
@@ -121,27 +123,69 @@ final class AppModel {
 
     // MARK: - Agent monitoring
 
-    /// Polls the local agent's state at 1 Hz while visible state needs it.
-    /// IPC is local and cheap; network is never polled at this rate.
+    func refreshPermissions() async {
+        guard let agent = environment?.agent else { return }
+        if let value = try? await agent.permissions() { permissions = value }
+    }
+
+    /// Hands the agent token to the daemon. Called on every (re)connection:
+    /// the daemon may have been (re)started by launchd after sign-in. The
+    /// daemon treats a repeat for the same user as a no-op and wipes local
+    /// data first if the account changed.
+    private func handOffSession(to agent: AgentClient) async -> Bool {
+        guard let environment, let user,
+              let token = await environment.session.agentTokenForDaemon(),
+              let tenant = await environment.session.tenantId else { return false }
+        do {
+            try await agent.setSession(AgentSessionPayload(
+                accessToken: token,
+                userId: user.id.uuidString.lowercased(),
+                tenantId: tenant.uuidString.lowercased(),
+                apiBaseUrl: environment.configuration.apiOrigin.absoluteString
+            ))
+            return true
+        } catch {
+            Log.agent.error("session hand-off to agent failed")
+            return false
+        }
+    }
+
+    /// Registers the bundled agent with launchd, then polls it at 1 Hz over
+    /// the local socket (cheap; the network is never polled at this rate).
+    /// Reconnects automatically when launchd restarts the agent.
     private func startAgentMonitoring() {
+        agentRegistration = AgentLifecycle.ensureRegistered()
         guard let agent = environment?.agent else { agentLink = .unavailable; return }
         agentPollTask?.cancel()
         agentPollTask = Task { [weak self] in
             var tick = 0
+            var sessionDelivered = false
             while !Task.isCancelled {
+                let state = try? await agent.state()
+                if state == nil { sessionDelivered = false }
+                if state != nil, !sessionDelivered {
+                    sessionDelivered = await self?.handOffSession(to: agent) ?? false
+                }
+                // A running legacy Tauri agent always wins the banner: the
+                // native agent refuses to start tracking while it is present.
                 let link: AgentLink
-                if let state = try? await agent.state() {
-                    link = .connected(state)
-                } else if LegacyAgentDetector.isLegacyAgentPresent() {
+                if LegacyAgentDetector.isLegacyAgentPresent() {
                     link = .legacyConflict
+                } else if let state {
+                    link = .connected(state)
                 } else {
                     link = .unavailable
                 }
                 var sync: AgentSyncStatus?
-                if tick % 15 == 0, case .connected = link { sync = try? await agent.syncStatus() }
+                var perms: AgentPermissions?
+                if tick % 15 == 0, state != nil {
+                    sync = try? await agent.syncStatus()
+                    perms = try? await agent.permissions()
+                }
                 guard let self else { return }
                 if self.agentLink != link { self.agentLink = link }
                 if let sync { self.syncStatus = sync }
+                if let perms, perms != self.permissions { self.permissions = perms }
                 tick += 1
                 try? await Task.sleep(for: .seconds(1))
             }

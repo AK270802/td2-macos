@@ -24,20 +24,10 @@ final class SignInViewModel {
         error = nil
         defer { isSubmitting = false }
         do {
-            let identity = try await environment.session.signIn(email: email, password: password)
+            try await environment.session.signIn(email: email, password: password)
             password = ""
-            if let agent = environment.agent {
-                // Hand the agent token to the native daemon if it is running.
-                // Absent daemon is not an error at sign-in (Milestone 3).
-                if let token = await environment.session.agentTokenForDaemon() {
-                    try? await agent.setSession(AgentSessionPayload(
-                        accessToken: token,
-                        userId: identity.userId.uuidString.lowercased(),
-                        tenantId: identity.tenantId.uuidString.lowercased(),
-                        apiBaseUrl: environment.configuration.apiOrigin.absoluteString
-                    ))
-                }
-            }
+            // The agent token is handed to the native daemon by AppModel once
+            // it is reachable (also after launchd restarts it).
             await model.completeSignIn()
         } catch let appError as AppError {
             error = appError
