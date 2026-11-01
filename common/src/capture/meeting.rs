@@ -55,6 +55,28 @@ fn app_call_title_match(process_name: &str, title_lower: &str) -> bool {
     }
 }
 
+/// Maps native macOS app names onto the Windows exe keys used by the tables
+/// above, so the same tested matching rules apply. Identity elsewhere.
+#[cfg(feature = "macos-native")]
+fn canonical_process(name: &str) -> &str {
+    match name {
+        "zoom.us" | "zoom" => "zoom.exe",
+        "microsoft teams" | "microsoft teams (work or school)" | "microsoft teams classic" | "msteams" => "teams.exe",
+        "webex" | "cisco webex meetings" => "webex.exe",
+        "slack" => "slack.exe",
+        "discord" => "discord.exe",
+        "skype" => "skype.exe",
+        "goto meeting" | "goto" => "goto.exe",
+        "ringcentral" => "ringcentral.exe",
+        other => other,
+    }
+}
+
+#[cfg(not(feature = "macos-native"))]
+fn canonical_process(name: &str) -> &str {
+    name
+}
+
 /// Web-based meeting title patterns, checked against any visible browser
 /// window regardless of focus (a Meet tab can be running while the user
 /// works in another app).
@@ -111,7 +133,7 @@ impl MeetingDetector {
         let mut title_match = false;
 
         for w in &windows {
-            let proc = w.process_name.as_str();
+            let proc = canonical_process(w.process_name.as_str());
             let title_lower = w.title.to_lowercase();
             if MEETING_APPS.contains(&proc) {
                 app_match = true;

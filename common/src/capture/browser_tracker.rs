@@ -7,8 +7,20 @@ const BROWSER_EXES: &[&str] = &[
     "chrome.exe","msedge.exe","firefox.exe","brave.exe","vivaldi.exe","opera.exe",
 ];
 
+/// macOS app names as reported by the native backend (lowercased owner name).
+#[cfg(feature = "macos-native")]
+const BROWSER_APPS_MACOS: &[&str] = &[
+    "google chrome", "safari", "microsoft edge", "brave browser", "arc",
+    "firefox", "vivaldi", "opera", "chromium",
+];
+
 pub fn is_browser(process_name: &str) -> bool {
-    BROWSER_EXES.contains(&process_name.to_lowercase().as_str())
+    let name = process_name.to_lowercase();
+    #[cfg(feature = "macos-native")]
+    if BROWSER_APPS_MACOS.contains(&name.as_str()) {
+        return true;
+    }
+    BROWSER_EXES.contains(&name.as_str())
 }
 
 /// Extract eTLD+1 from a URL string. Returns None for non-domain URLs.

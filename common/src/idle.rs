@@ -96,11 +96,26 @@ impl IdleDetector {
 
     /// Non-Windows: per-key sampling isn't available without a global event
     /// tap; activity presence is inferred from idle_ms resets instead.
-    #[cfg(not(windows))]
+    #[cfg(not(any(windows, all(target_os = "macos", feature = "macos-native"))))]
     pub fn tick(&mut self) -> InputSample {
         if Self::idle_ms() < 1500 {
             self.keystroke_count += 1;
         }
+        InputSample {
+            keystroke_count: self.keystroke_count,
+            mouse_click_count: self.mouse_click_count,
+            mouse_distance_px: self.mouse_distance_px,
+        }
+    }
+
+    /// Native macOS: real counts from a listen-only event tap (Input
+    /// Monitoring). Without the permission the counts stay 0 — never synthetic.
+    #[cfg(all(target_os = "macos", feature = "macos-native"))]
+    pub fn tick(&mut self) -> InputSample {
+        let (keys, clicks, distance) = crate::platform::take_input_counts();
+        self.keystroke_count = self.keystroke_count.saturating_add(keys);
+        self.mouse_click_count = self.mouse_click_count.saturating_add(clicks);
+        self.mouse_distance_px += distance;
         InputSample {
             keystroke_count: self.keystroke_count,
             mouse_click_count: self.mouse_click_count,

@@ -7,6 +7,11 @@ edition = "2021"
 name = "agentd"
 path = "src/main.rs"
 
+[features]
+default = []
+# Builds agentd as the native EffiLens macOS agent (see mac-os/RUST_AGENT_INTEGRATION.md).
+macos-native = ["common/macos-native"]
+
 [dependencies]
 common = { path = "../common" }
 serde = { workspace = true }

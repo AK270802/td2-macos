@@ -50,8 +50,16 @@ fn is_unreadable_db(e: &anyhow::Error) -> bool {
 pub fn data_dir() -> PathBuf {
     dirs::data_dir()
         .unwrap_or_else(|| dirs::home_dir().unwrap_or_else(|| PathBuf::from(".")))
-        .join("WorkPulseAgentRust")
+        .join(DATA_DIR_NAME)
 }
+
+/// The native EffiLens macOS agent keeps a fully separate store
+/// (`~/Library/Application Support/EffiLens/`) so it never shares
+/// account-sensitive data, keys or sockets with the legacy Tauri agent.
+#[cfg(feature = "macos-native")]
+const DATA_DIR_NAME: &str = "EffiLens";
+#[cfg(not(feature = "macos-native"))]
+const DATA_DIR_NAME: &str = "WorkPulseAgentRust";
 
 pub fn db_path() -> PathBuf {
     data_dir().join("workpulse.db")

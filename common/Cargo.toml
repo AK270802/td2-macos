@@ -3,6 +3,13 @@ name = "common"
 version = "2.0.0"
 edition = "2021"
 
+[features]
+default = []
+# Native macOS backend for the SwiftUI EffiLens app's agent (mac-os/).
+# OFF by default: Tauri, Windows and Linux builds are unaffected. Uses only
+# system frameworks via extern "C" (no extra crates, no Swift<->Rust FFI).
+macos-native = []
+
 [dependencies]
 serde = { workspace = true }
 serde_json = { workspace = true }

@@ -43,6 +43,26 @@ pub fn capture_and_save(
     keystroke_count: u32,
     mouse_click_count: u32,
 ) -> Result<CapturedScreenshot> {
+    let img = capture_active_window(window_rect)?;
+    process_and_write(img, out_dir, app_name, window_title, opts, keystroke_count, mouse_click_count)
+}
+
+/// Native macOS: image exactly the frontmost window by CGWindowID. When that
+/// is impossible (no Screen Recording permission, no window) the capture is
+/// skipped with an error — never a full-display fallback.
+#[cfg(all(target_os = "macos", feature = "macos-native"))]
+fn capture_active_window(_window_rect: Option<WindowRect>) -> Result<image::RgbaImage> {
+    let win = crate::platform::foreground_window()
+        .ok_or_else(|| anyhow::anyhow!("no capturable foreground window"))?;
+    crate::platform::capture_window(win.native_handle as u32).ok_or_else(|| {
+        anyhow::anyhow!("window capture unavailable (Screen Recording not granted or window not capturable); skipped")
+    })
+}
+
+/// Default backends: capture the monitor holding the active window, then crop
+/// to the window rect.
+#[cfg(not(all(target_os = "macos", feature = "macos-native")))]
+fn capture_active_window(window_rect: Option<WindowRect>) -> Result<image::RgbaImage> {
     // Pick the monitor containing the active window (multi-monitor correct),
     // falling back to the first monitor.
     let screens = xcap::Monitor::all()?;
@@ -93,6 +113,20 @@ pub fn capture_and_save(
         }
     }
 
+    Ok(img)
+}
+
+/// Scale → blur → overlay → JPEG ladder → write. Shared by every backend;
+/// the unblurred image never leaves memory.
+fn process_and_write(
+    mut img: image::RgbaImage,
+    out_dir: &std::path::Path,
+    app_name: Option<String>,
+    window_title: Option<String>,
+    opts: &ScreenshotOptions,
+    keystroke_count: u32,
+    mouse_click_count: u32,
+) -> Result<CapturedScreenshot> {
     // Scale down
     let (w, h) = (img.width(), img.height());
     if opts.scale < 1.0 {

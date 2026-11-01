@@ -7,17 +7,27 @@
 
 #[cfg(windows)]
 mod windows_impl;
+// Always compiled on macOS: the native backend reuses its browser-URL table.
 #[cfg(target_os = "macos")]
+#[cfg_attr(feature = "macos-native", allow(dead_code))]
 mod macos_impl;
+#[cfg(all(target_os = "macos", feature = "macos-native"))]
+mod macos_native;
 #[cfg(all(unix, not(target_os = "macos")))]
 mod linux_impl;
 
 #[cfg(windows)]
 use windows_impl as imp;
-#[cfg(target_os = "macos")]
+#[cfg(all(target_os = "macos", not(feature = "macos-native")))]
 use macos_impl as imp;
+#[cfg(all(target_os = "macos", feature = "macos-native"))]
+use macos_native as imp;
 #[cfg(all(unix, not(target_os = "macos")))]
 use linux_impl as imp;
+
+// Native-only capabilities used by idle.rs, screenshot.rs and agentd's IPC.
+#[cfg(all(target_os = "macos", feature = "macos-native"))]
+pub use macos_native::{capture_window, permissions, take_input_counts, Permissions};
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct WindowRect {
