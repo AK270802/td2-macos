@@ -90,12 +90,6 @@ ZIP="$OUT/EffiLens.app.zip"
 
 ditto -c -k --keepParent "$APP" "$ZIP"
 
-mkdir -p "$STAGE/dmg"
-ditto "$APP" "$STAGE/dmg/EffiLens.app"
-ln -s /Applications "$STAGE/dmg/Applications"
-# GitHub macOS runners intermittently fail `hdiutil create -srcfolder` with
-# "Resource busy" (background scanners holding files). Build a blank writable
-# image, copy the payload in, convert to compressed UDZO; retry each step.
 retry() {
   local n=1
   until "$@"; do
@@ -104,18 +98,13 @@ retry() {
     n=$((n + 1)); sleep $((n * 3))
   done
 }
-SIZE_MB=$(( $(du -sm "$STAGE/dmg" | cut -f1) + 40 ))
-RW="$STAGE/rw.dmg"
-retry hdiutil create -size "${SIZE_MB}m" -fs HFS+ -volname "EffiLens $VERSION" -ov "$RW" >/dev/null
-mkdir -p "$STAGE/rwmnt"
-retry hdiutil attach "$RW" -nobrowse -noverify -mountpoint "$STAGE/rwmnt" -quiet
-ditto "$STAGE/dmg/EffiLens.app" "$STAGE/rwmnt/EffiLens.app"
-ln -s /Applications "$STAGE/rwmnt/Applications"
-sync
-retry hdiutil detach "$STAGE/rwmnt" -quiet || retry hdiutil detach "$STAGE/rwmnt" -force -quiet
-rm -f "$DMG"
-retry hdiutil convert "$RW" -format UDZO -imagekey zlib-level=9 -o "$DMG" >/dev/null
 
+# Installer artwork rendered by Scripts/installer/render-assets.mjs (optional;
+# plain installers are produced when it is absent).
+ASSETS="${INSTALLER_ASSETS:-}"
+RES_DIR="$HERE/../Resources/Installer"
+
+# ── PKG (guided installer) ────────────────────────────────────────────
 # Component package: the app bundle only (agent + LaunchAgent live inside it,
 # so no files outside /Applications/EffiLens.app are ever written).
 # BundleIsRelocatable=false keeps upgrades at /Applications/EffiLens.app.
@@ -124,14 +113,90 @@ ditto "$APP" "$STAGE/pkgroot/EffiLens.app"
 pkgbuild --analyze --root "$STAGE/pkgroot" "$STAGE/components.plist" >/dev/null
 /usr/libexec/PlistBuddy -c "Set :0:BundleIsRelocatable false" "$STAGE/components.plist"
 /usr/libexec/PlistBuddy -c "Set :0:BundleIsVersionChecked true" "$STAGE/components.plist"
+mkdir -p "$STAGE/pkgs"
 pkgbuild \
   --root "$STAGE/pkgroot" \
   --component-plist "$STAGE/components.plist" \
   --identifier "com.baseel.effilens.mac.pkg" \
   --version "$VERSION.$BUILD" \
   --install-location /Applications \
-  "$STAGE/EffiLens-component.pkg" >/dev/null
-productbuild --package "$STAGE/EffiLens-component.pkg" "$PKG" >/dev/null
+  "$STAGE/pkgs/EffiLens-component.pkg" >/dev/null
+
+# Distribution: branded welcome / summary + background (prototype #installer).
+# Installer.app's own steps (Introduction · Destination · Installation Type ·
+# Installation · Summary) match the prototype's step list. No license step:
+# no legal agreement text has been provided for the native app.
+mkdir -p "$STAGE/pkgres"
+cp "$RES_DIR/welcome.html" "$RES_DIR/conclusion.html" "$STAGE/pkgres/"
+BG_XML=""
+if [ -n "$ASSETS" ] && [ -f "$ASSETS/pkg-background.png" ]; then
+  cp "$ASSETS/pkg-background.png" "$ASSETS/pkg-background-dark.png" "$STAGE/pkgres/"
+  BG_XML='<background file="pkg-background.png" alignment="bottomleft" scaling="none"/>
+    <background-darkAqua file="pkg-background-dark.png" alignment="bottomleft" scaling="none"/>'
+fi
+cat > "$STAGE/distribution.xml" <<XML
+<?xml version="1.0" encoding="utf-8"?>
+<installer-gui-script minSpecVersion="2">
+    <title>EffiLens</title>
+    <welcome file="welcome.html" mime-type="text/html"/>
+    <conclusion file="conclusion.html" mime-type="text/html"/>
+    $BG_XML
+    <options customize="never" require-scripts="false" hostArchitectures="arm64,x86_64"/>
+    <domains enable_anywhere="false" enable_currentUserHome="false" enable_localSystem="true"/>
+    <volume-check><allowed-os-versions><os-version min="14.0"/></allowed-os-versions></volume-check>
+    <choices-outline><line choice="default"><line choice="com.baseel.effilens.mac.pkg"/></line></choices-outline>
+    <choice id="default"/>
+    <choice id="com.baseel.effilens.mac.pkg" visible="false"><pkg-ref id="com.baseel.effilens.mac.pkg"/></choice>
+    <pkg-ref id="com.baseel.effilens.mac.pkg" version="$VERSION.$BUILD" onConclusion="none">EffiLens-component.pkg</pkg-ref>
+</installer-gui-script>
+XML
+productbuild --distribution "$STAGE/distribution.xml" --resources "$STAGE/pkgres" \
+  --package-path "$STAGE/pkgs" "$PKG" >/dev/null
+
+# ── DMG (prototype #dmg: 620×400, app → Applications, guided installer) ──
+DMG_DONE=0
+if [ -n "$ASSETS" ] && [ -f "$ASSETS/dmg-background.png" ] && command -v create-dmg >/dev/null; then
+  mkdir -p "$STAGE/dmgsrc"
+  ditto "$APP" "$STAGE/dmgsrc/EffiLens.app"
+  cp "$PKG" "$STAGE/dmgsrc/Install EffiLens.pkg"
+  tiffutil -cathidpicheck "$ASSETS/dmg-background.png" "$ASSETS/dmg-background@2x.png" -out "$STAGE/dmg-background.tiff" >/dev/null 2>&1 \
+    || cp "$ASSETS/dmg-background.png" "$STAGE/dmg-background.tiff"
+  rm -f "$DMG"
+  if create-dmg \
+      --volname "EffiLens $VERSION" \
+      --background "$STAGE/dmg-background.tiff" \
+      --window-pos 200 120 --window-size 620 400 \
+      --icon-size 104 --text-size 13 \
+      --icon "EffiLens.app" 170 205 \
+      --app-drop-link 450 205 \
+      --icon "Install EffiLens.pkg" 310 345 \
+      --hide-extension "EffiLens.app" --hide-extension "Install EffiLens.pkg" \
+      --no-internet-enable \
+      "$DMG" "$STAGE/dmgsrc" >/dev/null; then
+    DMG_DONE=1
+    echo "Branded DMG created (create-dmg)"
+  else
+    echo "::warning::create-dmg failed — falling back to a plain DMG"
+  fi
+fi
+if [ "$DMG_DONE" = 0 ]; then
+  # GitHub macOS runners intermittently fail `hdiutil create -srcfolder` with
+  # "Resource busy". Build a blank writable image, copy in, convert; retry.
+  mkdir -p "$STAGE/dmg"
+  ditto "$APP" "$STAGE/dmg/EffiLens.app"
+  SIZE_MB=$(( $(du -sm "$STAGE/dmg" | cut -f1) + $(du -sm "$PKG" | cut -f1) + 40 ))
+  RW="$STAGE/rw.dmg"
+  retry hdiutil create -size "${SIZE_MB}m" -fs HFS+ -volname "EffiLens $VERSION" -ov "$RW" >/dev/null
+  mkdir -p "$STAGE/rwmnt"
+  retry hdiutil attach "$RW" -nobrowse -noverify -mountpoint "$STAGE/rwmnt" -quiet
+  ditto "$STAGE/dmg/EffiLens.app" "$STAGE/rwmnt/EffiLens.app"
+  cp "$PKG" "$STAGE/rwmnt/Install EffiLens.pkg"
+  ln -s /Applications "$STAGE/rwmnt/Applications"
+  sync
+  retry hdiutil detach "$STAGE/rwmnt" -quiet || retry hdiutil detach "$STAGE/rwmnt" -force -quiet
+  rm -f "$DMG"
+  retry hdiutil convert "$RW" -format UDZO -imagekey zlib-level=9 -o "$DMG" >/dev/null
+fi
 
 # ── Installer validation ──────────────────────────────────────────────
 echo "Validating DMG…"

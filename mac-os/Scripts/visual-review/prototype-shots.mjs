@@ -58,6 +58,15 @@ for (const theme of ["light", "dark"]) {
     await page.evaluate((v) => { S.onboarded = true; show("app"); S.view = v; render(); }, view);
     await shoot("#app", `${name}-${theme}.png`);
   }
+  // Installation screens: DMG window and each guided-installer step.
+  await prepare(theme);
+  await page.evaluate(() => { show("dmg"); });
+  await shoot("#dmg", `dmg-${theme}.png`);
+  for (const step of [0, 1, 2, 3, 4, 5]) {
+    await prepare(theme);
+    await page.evaluate((i) => { show("installer"); istep = i; iagree = true; renderInst(); }, step);
+    await shoot("#installer", `installer-${step}-${theme}.png`);
+  }
   await prepare(theme);
   await page.evaluate(() => { S.onboarded = true; document.querySelector("#popover").classList.add("show"); renderPopover(); });
   await shoot("#popover", `menubar-${theme}.png`);

@@ -16,20 +16,22 @@ struct OnboardingWindow<Content: View>: View {
     @ViewBuilder var content: Content
 
     var body: some View {
-        HStack(spacing: 0) {
-            OnboardingArtPanel()
-                .frame(width: Metrics.onboardingArtWidth)
-            VStack(alignment: .leading, spacing: 0) { content }
-                .padding(EdgeInsets(top: 54, leading: 44, bottom: 28, trailing: 44))
-                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+        // The window frame (820 × 560) is set by WindowConfigurator; the
+        // GeometryReader fills it edge to edge, including under the
+        // transparent title bar, and never drives the window's size.
+        GeometryReader { geo in
+            HStack(spacing: 0) {
+                OnboardingArtPanel()
+                    .frame(width: Metrics.onboardingArtWidth, height: geo.size.height)
+                VStack(alignment: .leading, spacing: 0) { content }
+                    .padding(EdgeInsets(top: 54, leading: 44, bottom: 28, trailing: 44))
+                    .frame(width: max(geo.size.width - Metrics.onboardingArtWidth, 0), height: geo.size.height, alignment: .topLeading)
+            }
+            .frame(width: geo.size.width, height: geo.size.height)
+            .background(GlassBackdrop())
+            .clipped()
         }
-        // Sized to the window minus the title bar; ignoresSafeArea then
-        // extends it under the transparent title bar, so the window is exactly
-        // 820 × 560 (otherwise SwiftUI adds the 28 pt inset below the content).
-        .frame(width: Metrics.onboardingWindow.width, height: Metrics.onboardingWindow.height - Metrics.titleBarHeight)
         .ignoresSafeArea()
-        .background(GlassBackdrop())
-        .clipped()
     }
 }
 

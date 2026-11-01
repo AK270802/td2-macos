@@ -279,10 +279,22 @@ jobs:
             mkdir -p "$RUNNER_TEMP/apps/$c"
             ditto -x -k "$RUNNER_TEMP/apps/EffiLens-$c.app.zip" "$RUNNER_TEMP/apps/$c"
           done
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+      - name: Installer artwork
+        run: |
+          brew install create-dmg
+          mkdir -p "$RUNNER_TEMP/pw" && cd "$RUNNER_TEMP/pw"
+          npm init -y >/dev/null
+          npm install --no-audit --no-fund playwright@1.48.2 >/dev/null
+          npx playwright install chromium >/dev/null
+          cp "$GITHUB_WORKSPACE/mac-os/Scripts/installer/render-assets.mjs" .
+          node render-assets.mjs "$GITHUB_WORKSPACE/mac-os" "$RUNNER_TEMP/installer-assets"
       - name: Package Release (EffiLens-macOS-universal.*)
-        run: ./Scripts/package.sh "$RUNNER_TEMP/apps/Release/EffiLens.app" "$RUNNER_TEMP/out" universal
+        run: INSTALLER_ASSETS="$RUNNER_TEMP/installer-assets" ./Scripts/package.sh "$RUNNER_TEMP/apps/Release/EffiLens.app" "$RUNNER_TEMP/out" universal
       - name: Package Debug (diagnostics build)
-        run: ./Scripts/package.sh "$RUNNER_TEMP/apps/Debug/EffiLens.app" "$RUNNER_TEMP/out-debug" universal-debug
+        run: INSTALLER_ASSETS="$RUNNER_TEMP/installer-assets" ./Scripts/package.sh "$RUNNER_TEMP/apps/Debug/EffiLens.app" "$RUNNER_TEMP/out-debug" universal-debug
       - name: Launch smoke test (app starts and stays up for 20 s)
         run: |
           APP="$RUNNER_TEMP/apps/Release/EffiLens.app"
@@ -333,10 +345,13 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/download-artifact@v4
         with:
-          name: app-Debug
+          pattern: app-*
+          merge-multiple: true
           path: ${{ runner.temp }}/apps
-      - name: Unpack Debug app
-        run: ditto -x -k "$RUNNER_TEMP/apps/EffiLens-Debug.app.zip" "$RUNNER_TEMP/apps/Debug"
+      - name: Unpack app bundles
+        run: |
+          ditto -x -k "$RUNNER_TEMP/apps/EffiLens-Debug.app.zip" "$RUNNER_TEMP/apps/Debug"
+          ditto -x -k "$RUNNER_TEMP/apps/EffiLens-Release.app.zip" "$RUNNER_TEMP/apps/Release"
       - uses: actions/setup-node@v4
         with:
           node-version: "20"
@@ -350,6 +365,19 @@ jobs:
           node prototype-shots.mjs "$GITHUB_WORKSPACE/mac-os/Design/EffiLens-macOS-Prototype.html" "$RUNNER_TEMP/visual-review/reference"
       - name: SwiftUI screenshots (review mode, light + dark)
         run: bash Scripts/visual-review/capture-app.sh "$RUNNER_TEMP/apps/Debug/EffiLens.app" "$RUNNER_TEMP/visual-review/current"
+      - name: Installer artwork (rendered from the prototype design)
+        run: |
+          cp Scripts/installer/render-assets.mjs "$RUNNER_TEMP/pw/"
+          cd "$RUNNER_TEMP/pw" && node render-assets.mjs "$GITHUB_WORKSPACE/mac-os" "$RUNNER_TEMP/installer-assets"
+          cp "$RUNNER_TEMP/installer-assets/dmg-background.png" "$RUNNER_TEMP/visual-review/current/dmg-background-art.png"
+      - name: Build branded DMG + PKG for review
+        continue-on-error: true
+        run: |
+          brew install create-dmg
+          INSTALLER_ASSETS="$RUNNER_TEMP/installer-assets" ./Scripts/package.sh "$RUNNER_TEMP/apps/Release/EffiLens.app" "$RUNNER_TEMP/review-pkg" universal
+      - name: Installer screenshots (DMG window + Installer.app steps)
+        continue-on-error: true
+        run: bash Scripts/visual-review/capture-installers.sh "$RUNNER_TEMP/review-pkg/EffiLens-macOS-universal.dmg" "$RUNNER_TEMP/review-pkg/EffiLens-macOS-universal.pkg" "$RUNNER_TEMP/visual-review/current"
       - name: Side-by-side index
         run: python3 Scripts/visual-review/make-index.py "$RUNNER_TEMP/visual-review"
       - uses: actions/upload-artifact@v4
