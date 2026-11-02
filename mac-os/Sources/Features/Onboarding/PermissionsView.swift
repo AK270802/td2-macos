@@ -9,8 +9,13 @@ import EffiLensKit
 /// macOS privacy permissions (prototype `.perm` rows: 32 pt blue icon tile,
 /// title, dim description, `Allow…` or a green "Allowed" pill). Requests
 /// always go through the system prompt / System Settings — never bypassed.
-/// Status is what the agent reports (it is the capturing process), falling
-/// back to the app's own preflight when the agent is offline.
+///
+/// Two TCC identities are involved: EffiLens.app (prompts, UI) and the
+/// tracking agent `effilens-agentd`, which launchd runs as its OWN
+/// responsible process — so macOS checks the agent's identity when it
+/// captures. A grant for "EffiLens" alone does not authorise capture.
+/// `PermissionState` combines both so the row never shows `Allow…` for
+/// something that is granted, nor "Allowed" while capture would fail.
 struct PermissionsList: View {
     @Environment(AppModel.self) private var model
     @State private var local = LocalPermissions.current()
@@ -19,7 +24,7 @@ struct PermissionsList: View {
     var body: some View {
         VStack(spacing: 8) {
             PermissionRow(title: "Notifications", detail: "Tracking reminders and leave updates", symbol: "bell",
-                          granted: notifications == .authorized || notifications == .provisional) {
+                          state: notifications == .authorized || notifications == .provisional ? .granted : .notGranted) {
                 Task {
                     if notifications == .denied {
                         if let url = URL(string: "x-apple.systempreferences:com.apple.Notifications-Settings.extension") { NSWorkspace.shared.open(url) }
@@ -30,34 +35,67 @@ struct PermissionsList: View {
                 }
             }
             PermissionRow(title: "Accessibility", detail: "Detect the active app for accurate time", symbol: "hand.raised",
-                          granted: model.permissions?.accessibility ?? local.accessibility) {
-                LocalPermissions.requestAccessibility()
-                LocalPermissions.openSettings(pane: "Privacy_Accessibility")
+                          state: PermissionState(app: local.accessibility, agent: model.permissions?.accessibility)) {
+                request(pane: "Privacy_Accessibility") { LocalPermissions.requestAccessibility() }
             }
             PermissionRow(title: "Screen Recording", detail: "Optional, for policy screenshots", symbol: "rectangle.dashed",
-                          granted: model.permissions?.screenRecording ?? local.screenRecording) {
-                LocalPermissions.requestScreenRecording()
-                LocalPermissions.openSettings(pane: "Privacy_ScreenCapture")
+                          state: PermissionState(app: local.screenRecording, agent: model.permissions?.screenRecording)) {
+                request(pane: "Privacy_ScreenCapture") { LocalPermissions.requestScreenRecording() }
             }
             PermissionRow(title: "Input Monitoring", detail: "Activity counts — never what you type", symbol: "keyboard",
-                          granted: model.permissions?.inputMonitoring ?? local.inputMonitoring) {
-                LocalPermissions.requestInputMonitoring()
-                LocalPermissions.openSettings(pane: "Privacy_ListenEvent")
+                          state: PermissionState(app: local.inputMonitoring, agent: model.permissions?.inputMonitoring)) {
+                request(pane: "Privacy_ListenEvent") { LocalPermissions.requestInputMonitoring() }
             }
             PermissionRow(title: "Open at Login", detail: loginDetail, symbol: "person.crop.circle.badge.checkmark",
-                          granted: model.agentRegistration == .enabled,
+                          state: model.agentRegistration == .enabled ? .granted : .notGranted,
                           actionTitle: model.agentRegistration == .notBundled ? nil : "Allow…") {
                 model.restartAgentConnection()
                 if model.agentRegistration == .requiresApproval { AgentLifecycle.openLoginItemsSettings() }
             }
-            Text("Browsers: macOS asks once per browser for website domains.")
-                .font(Typo.caption).foregroundStyle(Palette.textTertiary)
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .padding(.top, 2)
+            HStack(alignment: .firstTextBaseline) {
+                Text(footnote)
+                    .font(Typo.caption).foregroundStyle(Palette.textTertiary)
+                    .fixedSize(horizontal: false, vertical: true)
+                Spacer(minLength: Space.s)
+                Button("Recheck") { Task { await refresh() } }
+                    .buttonStyle(.effi)
+                    .controlSize(.small)
+            }
+            .padding(.top, 2)
         }
-        .task { await refresh() }
+        .task {
+            // Initial check, then poll while visible: TCC changes made in
+            // System Settings post no notification to the app.
+            await refresh()
+            while !Task.isCancelled {
+                try? await Task.sleep(for: .seconds(2))
+                await refresh()
+            }
+        }
         .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
             Task { await refresh() }
+        }
+    }
+
+    private var footnote: String {
+        let states = [
+            PermissionState(app: local.accessibility, agent: model.permissions?.accessibility),
+            PermissionState(app: local.screenRecording, agent: model.permissions?.screenRecording),
+            PermissionState(app: local.inputMonitoring, agent: model.permissions?.inputMonitoring),
+        ]
+        if states.contains(.agentPending) {
+            return "In System Settings, turn on both “EffiLens” and “effilens-agentd”. If a switch is already on, select it, remove it with −, then click Enable again."
+        }
+        return "Browsers: macOS asks once per browser for website domains."
+    }
+
+    /// App request (prompt attributed to EffiLens) + agent request (adds the
+    /// capturing process to the list), then the matching Settings pane.
+    private func request(pane: String, appRequest: () -> Void) {
+        appRequest()
+        Task {
+            await model.requestAgentPermissions()
+            LocalPermissions.openSettings(pane: pane)
         }
     }
 
@@ -100,7 +138,7 @@ private struct PermissionRow: View {
     let title: String
     let detail: String
     let symbol: String
-    let granted: Bool
+    let state: PermissionState
     var actionTitle: String? = "Allow…"
     let request: () -> Void
 
@@ -112,8 +150,11 @@ private struct PermissionRow: View {
                 Text(detail).font(Typo.caption).foregroundStyle(Palette.textTertiary).lineLimit(1)
             }
             Spacer(minLength: Space.s)
-            if granted {
+            if state == .granted {
                 Pill(text: "Allowed", kind: .ok, symbol: "checkmark")
+            } else if state == .agentPending, actionTitle != nil {
+                Button("Enable agent…", action: request).buttonStyle(.effi)
+                    .help("EffiLens is allowed; the tracking agent (effilens-agentd) also needs this permission.")
             } else if let actionTitle {
                 Button(actionTitle, action: request).buttonStyle(.effi)
             } else {
@@ -125,7 +166,33 @@ private struct PermissionRow: View {
         .background(Palette.textPrimary.opacity(0.02), in: RoundedRectangle(cornerRadius: Radius.task, style: .continuous))
         .overlay(RoundedRectangle(cornerRadius: Radius.task, style: .continuous).strokeBorder(Palette.hairline))
         .accessibilityElement(children: .combine)
-        .accessibilityValue(granted ? "Allowed" : "Not allowed")
+        .accessibilityValue(state.accessibilityText)
+    }
+}
+
+/// Combined status of one capture permission.
+enum PermissionState: Equatable {
+    /// The capturing agent is authorised (or, with the agent unreachable,
+    /// the app is — the agent re-checks when it starts capturing).
+    case granted
+    /// EffiLens.app is authorised but the agent is not yet.
+    case agentPending
+    case notGranted
+
+    init(app: Bool, agent: Bool?) {
+        switch agent {
+        case .some(true): self = .granted
+        case .some(false): self = app ? .agentPending : .notGranted
+        case .none: self = app ? .granted : .notGranted   // agent unknown: never reported as denied on its own
+        }
+    }
+
+    var accessibilityText: String {
+        switch self {
+        case .granted: return "Allowed"
+        case .agentPending: return "Allowed for EffiLens, tracking agent not yet allowed"
+        case .notGranted: return "Not allowed"
+        }
     }
 }
 

@@ -203,3 +203,40 @@ Record each item as PASS / FAIL / BLOCKED, with the macOS version and the chip (
 - [ ] Offline queue → recovery
 - [ ] Logout clears unsynced data, and account B never uploads account A's data
 - [ ] Uninstall per §16
+
+## Permissions: two identities (macOS 14 and later)
+
+EffiLens has two processes that macOS checks for permission separately:
+
+| Process | Shown in System Settings as | Used for |
+|---|---|---|
+| EffiLens.app | **EffiLens** | UI and notifications |
+| Tracking agent (launchd LaunchAgent) | **effilens-agentd** | Accessibility, Screen Recording and Input Monitoring capture |
+
+launchd starts the agent as its own *responsible process*. When the agent captures, macOS checks the agent's code identity, not the app's. Before this fix, turning on "EffiLens" alone left capture blocked while the UI showed `Allow…`.
+
+What happens now:
+- **Allow… / Enable agent…** asks both the app and the agent to register in that Privacy & Security list, then opens the pane.
+- A row shows **Allowed** only when the agent can capture.
+- **Enable agent…** means EffiLens is allowed but `effilens-agentd` is not yet.
+- If the agent can't be reached, the state is unknown, and the row falls back to the app's own check. It never shows "denied" just because the agent didn't answer.
+- Status refreshes when the list appears, every 2 s while it is visible, when the app becomes active (for example after returning from System Settings), on **Recheck**, and when tracking starts.
+
+### Permissions after an update (unsigned / ad-hoc builds)
+
+Ad-hoc signatures are pinned to the binary's hash (cdhash), so every new build is a "different app" to macOS. An old switch can stay **on** in System Settings but no longer apply. If a row says `Allow…` while the switch is already on:
+1. Select the entry (EffiLens or effilens-agentd) and remove it with **−**.
+2. Click **Allow… / Enable agent…** in EffiLens again and turn the new entry on.
+3. Restart tracking. For Screen Recording, macOS may ask you to quit and reopen the app.
+
+**Permanent fix:** sign with a **Developer ID** certificate (`Scripts/release.sh`) and notarise. macOS then keys the grants to Team ID + bundle identifier (`com.baseel.effilens.mac`, agent `com.baseel.effilens.mac.agent`), so they survive updates. For managed fleets, a PPPC (MDM) profile can pre-approve Accessibility and Input Monitoring. Screen Recording can only be pre-set to "allow standard users to approve".
+
+### Manual test checklist
+1. Fresh install → onboarding: every capture row shows `Allow…`.
+2. Click Allow… on Screen Recording: System Settings opens, and both EffiLens and effilens-agentd are listed.
+3. Turn on only EffiLens → within about 2 s the row shows **Enable agent…**, and the footnote explains why.
+4. Turn on effilens-agentd → the row shows **Allowed** without restarting the app.
+5. Turn it off → the row goes back to Allow…, and the dashboard banner lists the permission.
+6. Quit the agent (`launchctl bootout gui/$UID/com.baseel.effilens.mac.agent`) → rows fall back to the app's status (no false "denied"). Click Recheck after the agent restarts.
+7. Start tracking with everything allowed → no banner, screenshots upload, and activity counts are above zero.
+8. Repeat on macOS 14, 15 and 26.

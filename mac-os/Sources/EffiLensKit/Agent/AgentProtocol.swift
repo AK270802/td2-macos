@@ -56,6 +56,7 @@ public enum AgentCommand: String, Sendable {
     case setSession = "set_session"
     case clearSession = "clear_session"
     case getPermissions = "get_permissions"
+    case requestPermissions = "request_permissions"
 }
 
 struct AgentRequest<Payload: Encodable>: Encodable {

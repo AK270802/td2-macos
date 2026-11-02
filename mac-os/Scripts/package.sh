@@ -77,7 +77,10 @@ while IFS= read -r -d '' nested; do
   codesign --force --sign - --timestamp=none "$nested"
 done < <(find "$APP/Contents" \( -name "*.dylib" -o -name "*.framework" \) -print0)
 if [ -f "$AGENT" ]; then
-  codesign --force --sign - --options runtime --timestamp=none "$AGENT"
+  # Stable signing identifier: TCC lists the agent as "effilens-agentd" and
+  # keys its grants to this identity (ad-hoc builds still pin the cdhash —
+  # see INSTALL_AND_TEST.md, "Permissions after an update").
+  codesign --force --sign - --identifier com.baseel.effilens.mac.agent --options runtime --timestamp=none "$AGENT"
 fi
 codesign --force --sign - --options runtime --timestamp=none --entitlements "$ENTITLEMENTS" "$APP"
 codesign --verify --strict --verbose=2 "$APP"

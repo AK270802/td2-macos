@@ -256,9 +256,19 @@ final class AppModel {
 
     // MARK: - Agent monitoring
 
+    /// Fresh agent-side permission state. On failure the value becomes nil
+    /// ("unknown") instead of keeping a stale snapshot — unknown is never
+    /// shown as denied.
     func refreshPermissions() async {
+        guard let agent = environment?.agent else { permissions = nil; return }
+        let value = try? await agent.permissions()
+        if value != permissions { permissions = value }
+    }
+
+    /// Registers the tracking agent in the missing Privacy & Security lists.
+    func requestAgentPermissions() async {
         guard let agent = environment?.agent else { return }
-        if let value = try? await agent.permissions() { permissions = value }
+        if let value = try? await agent.requestPermissions(), value != permissions { permissions = value }
     }
 
     /// Hands the agent token to the daemon. Called on every (re)connection:

@@ -92,6 +92,17 @@ extern "C" {
     fn CFDataGetBytePtr(data: CFTypeRef) -> *const u8;
     fn CFDataGetLength(data: CFTypeRef) -> CFIndex;
     fn CFRelease(cf: CFTypeRef);
+    fn CFDictionaryCreate(
+        alloc: CFTypeRef,
+        keys: *const CFTypeRef,
+        values: *const CFTypeRef,
+        count: CFIndex,
+        key_callbacks: *const c_void,
+        value_callbacks: *const c_void,
+    ) -> CFTypeRef;
+    static kCFBooleanTrue: CFTypeRef;
+    static kCFTypeDictionaryKeyCallBacks: c_void;
+    static kCFTypeDictionaryValueCallBacks: c_void;
     fn CFRunLoopGetCurrent() -> CFTypeRef;
     fn CFRunLoopAddSource(rl: CFTypeRef, source: CFTypeRef, mode: CFTypeRef);
     fn CFRunLoopRun();
@@ -105,6 +116,7 @@ extern "C" {
     fn CGRectMakeWithDictionaryRepresentation(dict: CFTypeRef, rect: *mut CGRect) -> bool;
     fn CGEventSourceSecondsSinceLastEventType(state: i32, event_type: u32) -> f64;
     fn CGPreflightScreenCaptureAccess() -> bool;
+    fn CGRequestScreenCaptureAccess() -> bool;
     fn CGWindowListCreateImage(bounds: CGRect, list_option: u32, window: CGWindowID, image_option: u32) -> CFTypeRef;
     fn CGImageGetWidth(image: CFTypeRef) -> usize;
     fn CGImageGetHeight(image: CFTypeRef) -> usize;
@@ -135,6 +147,7 @@ extern "C" {
 #[link(name = "ApplicationServices", kind = "framework")]
 extern "C" {
     fn AXIsProcessTrusted() -> bool;
+    fn AXIsProcessTrustedWithOptions(options: CFTypeRef) -> bool;
     fn AXUIElementCreateApplication(pid: c_int) -> CFTypeRef;
     fn AXUIElementCopyAttributeValue(element: CFTypeRef, attribute: CFTypeRef, value: *mut CFTypeRef) -> i32;
 }
@@ -142,6 +155,7 @@ extern "C" {
 #[link(name = "IOKit", kind = "framework")]
 extern "C" {
     fn IOHIDCheckAccess(request_type: u32) -> u32;
+    fn IOHIDRequestAccess(request_type: u32) -> bool;
 }
 
 extern "C" {
@@ -332,7 +346,7 @@ pub fn enumerate_windows() -> Vec<WindowInfo> {
 
 // ── Permissions ──────────────────────────────────────────────────────────────
 
-#[derive(Debug, Clone, Copy, serde::Serialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize)]
 pub struct Permissions {
     pub accessibility: bool,
     pub screen_recording: bool,
@@ -510,4 +524,44 @@ pub fn take_input_counts() -> (u32, u32, f64) {
     let clicks = MOUSE_DOWNS.swap(0, Ordering::Relaxed);
     let dist = f64::from_bits(MOUSE_DISTANCE_BITS.swap(0f64.to_bits(), Ordering::Relaxed));
     (keys, clicks, dist)
+}
+
+/// Asks macOS to register THIS process (the agent — the process that actually
+/// captures) in each Privacy & Security list that is still missing, so the
+/// user can switch it on. Only permissions not yet granted are requested; the
+/// return value is a fresh preflight, never the request APIs' result (a
+/// request returning means nothing about the user's decision).
+///
+/// Why this exists: launchd starts the agent as its own responsible process,
+/// so TCC checks the agent's code identity, not EffiLens.app's. Granting only
+/// "EffiLens" in System Settings does not authorise the agent.
+pub fn request_missing_permissions() -> Permissions {
+    let before = permissions();
+    unsafe {
+        if !before.accessibility {
+            if let Some(key) = cfstring("AXTrustedCheckOptionPrompt") {
+                let keys = [key.0];
+                let values = [kCFBooleanTrue];
+                let dict = CFDictionaryCreate(
+                    std::ptr::null(),
+                    keys.as_ptr(),
+                    values.as_ptr(),
+                    1,
+                    &kCFTypeDictionaryKeyCallBacks as *const c_void,
+                    &kCFTypeDictionaryValueCallBacks as *const c_void,
+                );
+                if !dict.is_null() {
+                    let _ = AXIsProcessTrustedWithOptions(dict);
+                    CFRelease(dict);
+                }
+            }
+        }
+        if !before.screen_recording {
+            let _ = CGRequestScreenCaptureAccess();
+        }
+        if !before.input_monitoring {
+            let _ = IOHIDRequestAccess(kIOHIDRequestTypeListenEvent);
+        }
+    }
+    permissions()
 }

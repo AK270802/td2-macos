@@ -336,6 +336,9 @@ jobs:
   visual-review:
     name: 6b · Visual review screenshots
     needs: build-app
+    # Disabled: prototype visual comparison is no longer run in CI.
+    # Re-enable by removing this condition.
+    if: ${{ false }}
     runs-on: macos-15
     timeout-minutes: 40
     defaults:

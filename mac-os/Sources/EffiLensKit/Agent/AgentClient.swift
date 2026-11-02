@@ -50,6 +50,13 @@ public actor AgentClient {
         try await call(.getPermissions, payload: Optional<String>.none, as: AgentPermissions.self)
     }
 
+    /// Asks the agent (the capturing process, with its own TCC identity) to
+    /// register itself in the missing Privacy & Security lists. Returns a
+    /// fresh preflight — never treat the call itself as a grant.
+    public func requestPermissions() async throws -> AgentPermissions {
+        try await call(.requestPermissions, payload: Optional<String>.none, as: AgentPermissions.self)
+    }
+
     /// Local recent events (`get_recent_events`). Only type, time and
     /// duration are decoded — event payloads are never read by the UI.
     public func recentEvents(limit: Int = 20) async throws -> [AgentRecentEvent] {

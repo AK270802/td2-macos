@@ -300,6 +300,23 @@ mod native_cmds {
         })
     }
 
+    /// Registers the agent in the missing Privacy & Security lists (it is
+    /// the capturing process and has its own TCC identity), then returns a
+    /// fresh preflight.
+    pub fn request_permissions() -> IpcResponse {
+        #[cfg(target_os = "macos")]
+        {
+            match serde_json::to_value(common::platform::request_missing_permissions()) {
+                Ok(v) => IpcResponse::ok(v),
+                Err(e) => IpcResponse::err(e.to_string()),
+            }
+        }
+        #[cfg(not(target_os = "macos"))]
+        {
+            IpcResponse::err("permissions are only available on macOS")
+        }
+    }
+
     pub fn get_permissions() -> IpcResponse {
         #[cfg(target_os = "macos")]
         {
@@ -393,6 +410,8 @@ async fn handle_request(line: &str) -> IpcResponse {
         "clear_session" => native_cmds::clear_session(),
         #[cfg(feature = "macos-native")]
         "get_permissions" => native_cmds::get_permissions(),
+        #[cfg(feature = "macos-native")]
+        "request_permissions" => native_cmds::request_permissions(),
         _ => IpcResponse::err(format!("unknown command: {}", req.cmd)),
     }
 }

@@ -48,6 +48,7 @@ extension AppModel {
         let ref = AssignedWorkModel.ref(choice.task, in: choice.project)
         Task {
             await ensureAgentSession()
+            await refreshPermissions()   // banner reflects the state at tracking start
             await runAgent { try await $0.selectTask(ref) }
         }
     }
