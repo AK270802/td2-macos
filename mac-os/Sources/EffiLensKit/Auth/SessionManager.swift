@@ -38,6 +38,14 @@ public actor SessionManager: CredentialProvider {
     private var refreshTask: Task<Bool, Never>?
     private var agentRefreshTask: Task<Bool, Never>?
     private var eventContinuations: [UUID: AsyncStream<SessionEvent>.Continuation] = [:]
+    /// Reads the token the local daemon currently holds. When set, the daemon
+    /// is the ONLY party that rotates the agent token: `/auth/agent/refresh`
+    /// revokes the previous token, so two holders refreshing independently
+    /// revoke each other's copy and sign the user out.
+    private var agentTokenSource: (@Sendable () async -> String?)?
+    /// True from an interactive sign-in until the token is handed to the
+    /// daemon: only then is the app's agent token newer than the daemon's.
+    private var freshAgentToken = false
 
     public static let refreshCookieName = "wp_refresh_token"
 
@@ -88,6 +96,7 @@ public actor SessionManager: CredentialProvider {
 
         try secrets.write(refresh, for: .portalRefreshToken)
         try secrets.write(agent.accessToken, for: .agentToken)
+        freshAgentToken = true
         try? secrets.write(body.email, for: .lastEmail)
         try? secrets.write(agent.tenantId.uuidString, for: .tenantId)
         setPortalAccess(token)
@@ -127,6 +136,22 @@ public actor SessionManager: CredentialProvider {
     /// The agent token, for handing to the local Rust agent over IPC.
     public func agentTokenForDaemon() -> String? { try? secrets.read(.agentToken) }
 
+    public func setAgentTokenSource(_ source: @escaping @Sendable () async -> String?) {
+        agentTokenSource = source
+    }
+
+    /// True once after an interactive sign-in (the app's token is the newest).
+    public func consumeFreshAgentToken() -> Bool {
+        defer { freshAgentToken = false }
+        return freshAgentToken
+    }
+
+    /// Adopts the daemon's (possibly rotated) token as the app's copy.
+    public func adoptAgentToken(_ token: String) {
+        guard !token.isEmpty else { return }
+        try? secrets.write(token, for: .agentToken)
+    }
+
     // MARK: - CredentialProvider
 
     public func bearerToken(for requirement: AuthRequirement) async -> String? {
@@ -154,6 +179,15 @@ public actor SessionManager: CredentialProvider {
             return await refreshPortal()
         case .agent:
             if let current = try? secrets.read(.agentToken), current != failedToken { return true }
+            if let source = agentTokenSource {
+                // The daemon may have rotated the token: adopt its copy. Never
+                // refresh here — that would revoke the daemon's token.
+                if let daemon = await source(), !daemon.isEmpty, daemon != failedToken {
+                    try? secrets.write(daemon, for: .agentToken)
+                    return true
+                }
+                return false
+            }
             return await refreshAgent()
         }
     }
@@ -216,9 +250,9 @@ public actor SessionManager: CredentialProvider {
         } catch AppError.offline {
             return false
         } catch {
-            Log.auth.notice("agent token refresh rejected; clearing session")
-            clearCredentials()
-            emit(.expired)
+            // Only the agent endpoints are affected; the portal session stays
+            // valid, so this must not sign the user out.
+            Log.auth.notice("agent token refresh rejected")
             return false
         }
     }

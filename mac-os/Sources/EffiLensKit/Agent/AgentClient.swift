@@ -50,6 +50,11 @@ public actor AgentClient {
         try await call(.getPermissions, payload: Optional<String>.none, as: AgentPermissions.self)
     }
 
+    /// The agent token the daemon holds (it alone rotates it).
+    public func agentToken() async throws -> AgentTokenInfo {
+        try await call(.getAgentToken, payload: Optional<String>.none, as: AgentTokenInfo.self)
+    }
+
     /// Asks the agent (the capturing process, with its own TCC identity) to
     /// register itself in the missing Privacy & Security lists. Returns a
     /// fresh preflight — never treat the call itself as a grant.

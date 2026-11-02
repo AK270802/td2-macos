@@ -57,6 +57,7 @@ public enum AgentCommand: String, Sendable {
     case clearSession = "clear_session"
     case getPermissions = "get_permissions"
     case requestPermissions = "request_permissions"
+    case getAgentToken = "get_agent_token"
 }
 
 struct AgentRequest<Payload: Encodable>: Encodable {
@@ -163,6 +164,12 @@ public struct AgentPermissions: Decodable, Sendable, Equatable {
     public let accessibility: Bool
     public let screenRecording: Bool
     public let inputMonitoring: Bool
+}
+
+/// `get_agent_token` response — the daemon's current agent token.
+public struct AgentTokenInfo: Decodable, Sendable, Equatable {
+    public let token: String
+    public let userId: String
 }
 
 /// `set_session` payload — hands the agent token to the daemon.

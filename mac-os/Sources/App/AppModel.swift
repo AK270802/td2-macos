@@ -61,6 +61,11 @@ final class AppModel {
 
     func start() async {
         guard let environment, phase == .launching else { return }
+        if let agent = environment.agent {
+            await environment.session.setAgentTokenSource {
+                (try? await agent.agentToken())?.token
+            }
+        }
         observeSession(environment.session)
         observeWake()
         if !Prefs.bool(Prefs.rememberMac) {
@@ -277,12 +282,22 @@ final class AppModel {
     /// data first if the account changed.
     private func handOffSession(to agent: AgentClient) async -> Bool {
         guard let environment, let user,
-              let token = await environment.session.agentTokenForDaemon(),
+              var token = await environment.session.agentTokenForDaemon(),
               let tenant = await environment.session.tenantId else { return false }
+        let userId = user.id.uuidString.lowercased()
+        if await !environment.session.consumeFreshAgentToken(),
+           let daemon = try? await agent.agentToken(),
+           !daemon.token.isEmpty, daemon.userId.lowercased() == userId, daemon.token != token {
+            // Not a fresh sign-in and the daemon holds a newer (rotated) token
+            // for this user: adopt it instead of overwriting it with a
+            // revoked copy.
+            await environment.session.adoptAgentToken(daemon.token)
+            token = daemon.token
+        }
         do {
             try await agent.setSession(AgentSessionPayload(
                 accessToken: token,
-                userId: user.id.uuidString.lowercased(),
+                userId: userId,
                 tenantId: tenant.uuidString.lowercased(),
                 apiBaseUrl: environment.configuration.apiOrigin.absoluteString
             ))

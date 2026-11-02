@@ -94,6 +94,10 @@ public final class APIClient: Sendable {
                         continue
                     }
                     throw AppError.unauthenticated
+                case 401 where endpoint.auth == .none:
+                    // Unauthenticated calls (sign-in, refresh) carry no session:
+                    // a 401 means rejected credentials, not "session expired".
+                    throw AppError.validation(FastAPIErrorBody.detailMessage(from: data) ?? "Incorrect email or password.")
                 default:
                     throw Self.mapError(status: response.statusCode, data: data, response: response)
                 }

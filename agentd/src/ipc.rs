@@ -300,6 +300,19 @@ mod native_cmds {
         })
     }
 
+    /// The agent token the daemon currently holds. The daemon is the only
+    /// party that rotates it (`/auth/agent/refresh` revokes the previous
+    /// token), so the app reads it back here instead of refreshing itself.
+    /// Served only over the authenticated, user-only socket.
+    pub fn get_agent_token() -> IpcResponse {
+        let token = common::auth::session_store::get_access_token().unwrap_or_default();
+        let user_id = db::open()
+            .ok()
+            .and_then(|c| queries::get_config(&c, "user_id").ok())
+            .unwrap_or_default();
+        IpcResponse::ok(serde_json::json!({"token": token, "user_id": user_id}))
+    }
+
     /// Registers the agent in the missing Privacy & Security lists (it is
     /// the capturing process and has its own TCC identity), then returns a
     /// fresh preflight.
@@ -412,6 +425,8 @@ async fn handle_request(line: &str) -> IpcResponse {
         "get_permissions" => native_cmds::get_permissions(),
         #[cfg(feature = "macos-native")]
         "request_permissions" => native_cmds::request_permissions(),
+        #[cfg(feature = "macos-native")]
+        "get_agent_token" => native_cmds::get_agent_token(),
         _ => IpcResponse::err(format!("unknown command: {}", req.cmd)),
     }
 }
