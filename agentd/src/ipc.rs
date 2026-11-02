@@ -308,7 +308,7 @@ mod native_cmds {
         let token = common::auth::session_store::get_access_token().unwrap_or_default();
         let user_id = db::open()
             .ok()
-            .and_then(|c| queries::get_config(&c, "user_id").ok())
+            .and_then(|c| queries::get_config(&c, "user_id"))
             .unwrap_or_default();
         IpcResponse::ok(serde_json::json!({"token": token, "user_id": user_id}))
     }
