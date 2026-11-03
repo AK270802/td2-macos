@@ -69,15 +69,15 @@ struct DashboardView: View {
     @ViewBuilder
     private var kpis: some View {
         kpiCard("Today", symbol: "clock", state: viewModel.today) { s in
-            StatTileBody(value: Format.duration(s.workedSec), footnote: "\(s.utilisationPct)% utilisation")
+            StatTileBody(value: Format.duration(max(0, s.workedSec)), footnote: "\(Self.pct(s.utilisationPct))% utilisation")
         }
         kpiCard("This week", symbol: "chart.bar", state: viewModel.week) { w in
-            StatTileBody(value: Format.hours(w.workedSec),
+            StatTileBody(value: Format.hours(max(0, w.workedSec)),
                          suffix: w.requiredSec.map { "/ \(Format.hours($0, fractionDigits: 0))h" } ?? "h",
-                         progress: w.requiredSec.map { Double(w.workedSec) / Double($0) })
+                         progress: w.requiredSec.map { Double(max(0, w.workedSec)) / Double(max($0, 1)) })
         }
         kpiCard("Productivity", symbol: "eye", state: viewModel.today) { s in
-            StatTileBody(value: "\(s.productivePct)", suffix: "%", footnote: "Today")
+            StatTileBody(value: "\(Self.pct(s.productivePct))", suffix: "%", footnote: "Today")
         }
         kpiCard("Leave left", symbol: "leaf", state: viewModel.balance) { b in
             StatTileBody(value: b.totalRemainingText, suffix: "days", footnote: pendingText)
@@ -122,7 +122,7 @@ struct DashboardView: View {
 
     private var activeSession: some View {
         let state = model.timerState
-        let todaySec = viewModel.today.value?.workedSec ?? 0
+        let todaySec = max(0, viewModel.today.value?.workedSec ?? 0)
         let running = state?.state == .running
         return Card("Active session", trailing: sessionPill) {
             HStack(spacing: 22) {
@@ -137,17 +137,9 @@ struct DashboardView: View {
                     Text(state?.task?.projectName ?? "No task selected").font(Typo.small).foregroundStyle(Palette.textTertiary)
                     Text(state?.task?.taskName ?? "Choose a task to begin").font(.system(size: 17, weight: .semibold)).lineLimit(2)
                         .padding(.top, 3).padding(.bottom, 12)
-                    HStack(spacing: 8) {
-                        if state?.task != nil {
-                            Button { Task { await model.runAgent { try await $0.togglePlayPause() } } } label: {
-                                Label(running ? "Pause" : "Resume", systemImage: running ? "pause.fill" : "play.fill")
-                            }
-                            .buttonStyle(.effiButton(running ? .normal : .primary))
-                            Button("Stop") { Task { await model.runAgent { try await $0.stopTracking() } } }.buttonStyle(.effi)
-                        } else {
-                            Button { onNavigate(.tasks) } label: { Label("Select Task", systemImage: "play.fill") }.buttonStyle(.effiPrimary)
-                        }
-                        Button("Mini Timer") { openWindow(id: SceneID.miniTimer) }.buttonStyle(.effi)
+                    ViewThatFits(in: .horizontal) {
+                        sessionButtons(running: running, hasTask: state?.task != nil, compact: false)
+                        sessionButtons(running: running, hasTask: state?.task != nil, compact: true)
                     }
                     .disabled(!model.isAgentConnected)
                 }
@@ -155,6 +147,40 @@ struct DashboardView: View {
             }
         }
     }
+
+    @ViewBuilder
+    private func sessionButtons(running: Bool, hasTask: Bool, compact: Bool) -> some View {
+        HStack(spacing: 8) {
+            if hasTask {
+                Button { Task { await model.runAgent { try await $0.togglePlayPause() } } } label: {
+                    if compact { Image(systemName: running ? "pause.fill" : "play.fill") }
+                    else { Label(running ? "Pause" : "Resume", systemImage: running ? "pause.fill" : "play.fill") }
+                }
+                .buttonStyle(.effiButton(running ? .normal : .primary))
+                .help(running ? "Pause" : "Resume")
+                Button { Task { await model.runAgent { try await $0.stopTracking() } } } label: {
+                    if compact { Image(systemName: "stop.fill") } else { Text("Stop") }
+                }
+                .buttonStyle(.effi)
+                .help("Stop")
+            } else {
+                Button { onNavigate(.tasks) } label: {
+                    if compact { Image(systemName: "play.fill") } else { Label("Select Task", systemImage: "play.fill") }
+                }
+                .buttonStyle(.effiPrimary)
+                .help("Select Task")
+            }
+            Button { openWindow(id: SceneID.miniTimer) } label: {
+                if compact { Image(systemName: "macwindow") } else { Text("Mini Timer") }
+            }
+            .buttonStyle(.effi)
+            .help("Mini Timer")
+        }
+        .fixedSize()
+    }
+
+    /// Percentages from the API clamped to 0…100 for display.
+    static func pct(_ value: Int) -> Int { min(100, max(0, value)) }
 
     // MARK: Weekly hours
 
@@ -168,14 +194,14 @@ struct DashboardView: View {
     }
 
     private static func maxHours(_ days: [UtilisationDay]) -> Double {
-        let peak: Double = days.map { Double($0.activeSec) / 3600 }.max() ?? 0
+        let peak: Double = days.map { Double(max(0, $0.activeSec)) / 3600 }.max() ?? 0
         return max(9, peak)
     }
 
     private static func bars(for days: [UtilisationDay]) -> [BarsChart.Bar] {
         let today = CalendarDate(Date())
         return days.map { day in
-            let hours = Double(day.activeSec) / 3600
+            let hours = Double(max(0, day.activeSec)) / 3600
             return BarsChart.Bar(label: day.date.date()?.formatted(.dateTime.weekday(.abbreviated)) ?? "",
                                  value: hours,
                                  valueText: day.activeSec > 0 ? hours.formatted(.number.precision(.fractionLength(1))) : "",
