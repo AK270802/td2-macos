@@ -90,14 +90,14 @@ fn switch_task_logs_previous_session() {
 }
 
 #[test]
-fn idle_keep_working_deducts_idle_from_duration() {
+fn idle_keep_working_reports_idle_within_duration() {
     let conn = test_db();
     let mut svc = TimerService::new();
     svc.select_task(&conn, task("Idle attribution"));
-    std::thread::sleep(std::time::Duration::from_millis(1100));
+    std::thread::sleep(std::time::Duration::from_millis(3100));
 
-    // Idle began 30s ago (back-dated); user says "still working".
-    let idle_start = chrono::Utc::now().timestamp() - 30;
+    // Last 2s were idle (back-dated); user says "still working".
+    let idle_start = chrono::Utc::now().timestamp() - 2;
     svc.on_idle_threshold(idle_start);
     assert!(svc.idle_warning().is_some());
     svc.idle_keep_working(&conn);
@@ -106,9 +106,27 @@ fn idle_keep_working_deducts_idle_from_duration() {
     svc.stop(&conn);
     let (duration, idle): (i64, i64) = conn.query_row(
         "SELECT duration_sec, idle_sec FROM task_time_logs", [], |r| Ok((r.get(0)?, r.get(1)?))).unwrap();
-    assert!(idle >= 30, "idle span should be attributed, got {idle}");
-    // Net duration = gross (~1s) − idle (30s) → clamped at 0.
-    assert_eq!(duration, 0);
+    // Backend contract: duration INCLUDES idle (active = duration − idle).
+    assert!(duration >= 3, "duration must include the idle span, got {duration}");
+    assert!(idle >= 2, "idle span should be attributed, got {idle}");
+    assert!(idle <= duration, "idle must never exceed duration ({idle} > {duration})");
+}
+
+#[test]
+fn idle_is_capped_to_tracked_duration() {
+    let conn = test_db();
+    let mut svc = TimerService::new();
+    svc.select_task(&conn, task("Idle cap"));
+    std::thread::sleep(std::time::Duration::from_millis(1100));
+
+    // Idle start predates the session — must not produce idle > duration
+    // (that is what made the portal show negative active time).
+    svc.on_idle_threshold(chrono::Utc::now().timestamp() - 30);
+    svc.idle_keep_working(&conn);
+    svc.stop(&conn);
+    let (duration, idle): (i64, i64) = conn.query_row(
+        "SELECT duration_sec, idle_sec FROM task_time_logs", [], |r| Ok((r.get(0)?, r.get(1)?))).unwrap();
+    assert!(idle <= duration, "idle must be capped ({idle} > {duration})");
 }
 
 #[test]
