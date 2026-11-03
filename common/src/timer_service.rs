@@ -4,9 +4,11 @@
 //! tracking_pause/resume activity events), and carries the idle/break
 //! accounting the state machine itself doesn't know about.
 //!
-//! Accounting model (mirrors the Python agent and the backend contract):
-//!   duration_sec = active seconds (net of pauses) − idle_sec
-//!   idle_sec     = idle spans the user chose to keep working through
+//! Accounting model (go-agent parity and the backend contract — core-services
+//! computes active = duration_sec − idle_sec, utilisation = active / total):
+//!   duration_sec = tracked seconds (net of pauses), INCLUDING idle_sec
+//!   idle_sec     = idle spans the user chose to keep working through;
+//!                  always a subset of duration_sec (capped to it)
 //!   break_sec    = break spans taken during the session
 
 use crate::db::queries;
@@ -268,7 +270,9 @@ impl TimerService {
         let now = chrono::Utc::now().timestamp();
         let id = *self.session_log_id.get_or_insert_with(Uuid::new_v4);
         let started_at = self.session_started_wall.unwrap_or(now);
-        let net = accumulated_state.saturating_sub(self.idle_secs) as i64;
+        // duration includes idle (backend subtracts idle itself).
+        let gross = accumulated_state as i64;
+        let idle = (self.idle_secs as i64).min(gross);
         let log = TaskTimeLog {
             id,
             task_id: task.task_id,
@@ -277,8 +281,8 @@ impl TimerService {
             project_name: task.project_name,
             started_at,
             ended_at: now,
-            duration_sec: net,
-            idle_sec: self.idle_secs as i64,
+            duration_sec: gross,
+            idle_sec: idle,
             break_sec: self.break_secs as i64,
             meeting_sec: self.meeting_secs as i64,
             synced: false,
@@ -318,7 +322,9 @@ impl TimerService {
                         None => (now, 0),
                     };
                     let gross = duration_secs.saturating_sub(excluded);
-                    let net = gross.saturating_sub(self.idle_secs);
+                    // duration includes idle (backend subtracts idle itself);
+                    // idle can never exceed the tracked span.
+                    let idle = self.idle_secs.min(gross);
                     let started_at = self.session_started_wall.unwrap_or(ended_at - gross as i64);
                     let log = TaskTimeLog {
                         id: self.session_log_id.take().unwrap_or_else(Uuid::new_v4),
@@ -328,8 +334,8 @@ impl TimerService {
                         project_name: task.project_name.clone(),
                         started_at,
                         ended_at,
-                        duration_sec: net as i64,
-                        idle_sec: self.idle_secs as i64,
+                        duration_sec: gross as i64,
+                        idle_sec: idle as i64,
                         break_sec: self.break_secs as i64,
                         meeting_sec: self.meeting_secs as i64,
                         synced: false,
