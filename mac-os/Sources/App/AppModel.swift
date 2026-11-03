@@ -227,8 +227,21 @@ final class AppModel {
         try? await operation(agent)
     }
 
-    /// Recovery action: re-registers the LaunchAgent (launchd starts it) and
-    /// forces a fresh session hand-off on the next successful poll.
+    /// Restarts the agent child process (new process → current TCC grants)
+    /// and re-hands the session once it is back.
+    func restartAgentProcess() async {
+        AgentLifecycle.stop()
+        try? await Task.sleep(for: .milliseconds(500))
+        restartAgentConnection()
+        for _ in 0..<20 {
+            try? await Task.sleep(for: .milliseconds(250))
+            if let agent = environment?.agent, (try? await agent.state()) != nil { break }
+        }
+        await refreshPermissions()
+    }
+
+    /// Recovery action: (re)starts the agent child process and forces a
+    /// fresh session hand-off on the next successful poll.
     func restartAgentConnection() {
         agentRegistration = AgentLifecycle.ensureRegistered()
         startAgentMonitoring()

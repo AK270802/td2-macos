@@ -1,4 +1,5 @@
 import SwiftUI
+import ServiceManagement
 import AppKit
 import ApplicationServices
 import CoreGraphics
@@ -20,6 +21,8 @@ struct PermissionsList: View {
     @Environment(AppModel.self) private var model
     @State private var local = LocalPermissions.current()
     @State private var notifications: UNAuthorizationStatus = .notDetermined
+    @State private var loginEnabled = LoginItem.isEnabled
+    @State private var lastAgentRestart = Date.distantPast
 
     var body: some View {
         VStack(spacing: 8) {
@@ -47,10 +50,11 @@ struct PermissionsList: View {
                 request(pane: "Privacy_ListenEvent") { LocalPermissions.requestInputMonitoring() }
             }
             PermissionRow(title: "Open at Login", detail: loginDetail, symbol: "person.crop.circle.badge.checkmark",
-                          state: model.agentRegistration == .enabled ? .granted : .notGranted,
-                          actionTitle: model.agentRegistration == .notBundled ? nil : "Allow…") {
-                model.restartAgentConnection()
-                if model.agentRegistration == .requiresApproval { AgentLifecycle.openLoginItemsSettings() }
+                          state: loginEnabled ? .granted : .notGranted) {
+                if LoginItem.set(enabled: true) != nil || SMAppService.mainApp.status == .requiresApproval {
+                    AgentLifecycle.openLoginItemsSettings()
+                }
+                loginEnabled = LoginItem.isEnabled
             }
             HStack(alignment: .firstTextBaseline) {
                 Text(footnote)
@@ -84,7 +88,7 @@ struct PermissionsList: View {
             PermissionState(app: local.inputMonitoring, agent: model.permissions?.inputMonitoring),
         ]
         if states.contains(.agentPending) {
-            return "In System Settings, turn on both “EffiLens” and “effilens-agentd”. If a switch is already on, select it, remove it with −, then click Enable again."
+            return "EffiLens is allowed; restarting the tracking agent so it takes effect. If this stays, quit and reopen EffiLens."
         }
         return "Browsers: macOS asks once per browser for website domains."
     }
@@ -93,25 +97,37 @@ struct PermissionsList: View {
     /// capturing process to the list), then the matching Settings pane.
     private func request(pane: String, appRequest: () -> Void) {
         appRequest()
-        Task {
-            await model.requestAgentPermissions()
-            LocalPermissions.openSettings(pane: pane)
-        }
+        LocalPermissions.openSettings(pane: pane)
     }
 
     private var loginDetail: String {
         switch model.agentRegistration {
-        case .requiresApproval: return "Allow EffiLens under System Settings › General › Login Items"
         case .notBundled: return "The tracking agent is not included in this build"
-        case .failed(let message): return "Couldn't register the agent: \(message)"
-        default: return "Start the tracking agent automatically"
+        case .failed(let message): return "Couldn't start the agent: \(message)"
+        default: return "Open EffiLens (and tracking) when you log in"
         }
     }
 
     private func refresh() async {
         local = LocalPermissions.current()
+        loginEnabled = LoginItem.isEnabled
         notifications = await DesktopNotifier.authorizationStatus()
         await model.refreshPermissions()
+        // The agent runs under EffiLens's permissions, but macOS applies some
+        // grants (notably Screen Recording) only to processes started after
+        // the grant. If EffiLens is allowed and the agent still is not,
+        // restart the agent once (rate-limited) so it picks the grant up.
+        if hasAgentPending, Date().timeIntervalSince(lastAgentRestart) > 15 {
+            lastAgentRestart = Date()
+            await model.restartAgentProcess()
+        }
+    }
+
+    private var hasAgentPending: Bool {
+        guard let p = model.permissions else { return false }
+        return (local.accessibility && !p.accessibility)
+            || (local.screenRecording && !p.screenRecording)
+            || (local.inputMonitoring && !p.inputMonitoring)
     }
 }
 
@@ -153,8 +169,8 @@ private struct PermissionRow: View {
             if state == .granted {
                 Pill(text: "Allowed", kind: .ok, symbol: "checkmark")
             } else if state == .agentPending, actionTitle != nil {
-                Button("Enable agent…", action: request).buttonStyle(.effi)
-                    .help("EffiLens is allowed; the tracking agent (effilens-agentd) also needs this permission.")
+                Pill(text: "Applying…", kind: .gray)
+                    .help("EffiLens is allowed; the tracking agent is restarting to pick it up.")
             } else if let actionTitle {
                 Button(actionTitle, action: request).buttonStyle(.effi)
             } else {

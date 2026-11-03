@@ -92,43 +92,40 @@ enum DesktopNotifier {
     }
 }
 
-/// Quit-while-tracking confirmation. Quitting the app does NOT stop the
-/// background agent (launchd keeps it running), so the user chooses between
-/// keeping tracking in the background or stopping first.
+/// Quit: the agent is a child of the app (so it runs under EffiLens's
+/// privacy permissions) and stops with it. Tracking is stopped and synced
+/// first; while tracking, the user confirms.
 @MainActor
 final class AppDelegate: NSObject, NSApplicationDelegate {
     weak var model: AppModel?
 
     func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
-        guard let model, Prefs.bool(Prefs.confirmQuitWhileTracking),
-              let state = model.timerState, state.state == .running || state.state == .onBreak else {
+        guard let model else {
+            AgentLifecycle.stop()
             return .terminateNow
         }
-        let alert = NSAlert()
-        alert.messageText = "EffiLens is tracking time"
-        alert.informativeText = "“\(state.task?.taskName ?? "Current task")” is being tracked. The background agent keeps tracking after you quit the app unless you stop it."
-        alert.addButton(withTitle: "Keep Tracking & Quit")
-        alert.addButton(withTitle: "Stop Tracking & Quit")
-        alert.addButton(withTitle: "Cancel")
-        alert.showsSuppressionButton = true
-        alert.suppressionButton?.title = "Don't ask again"
-        let response = alert.runModal()
-        if alert.suppressionButton?.state == .on {
-            UserDefaults.standard.set(false, forKey: Prefs.confirmQuitWhileTracking)
-        }
-        switch response {
-        case .alertFirstButtonReturn:
-            return .terminateNow
-        case .alertSecondButtonReturn:
-            Task { @MainActor in
-                await model.runAgent { try await $0.stopTracking() }
-                await model.runAgentSilently { try await $0.syncNow() }
-                sender.reply(toApplicationShouldTerminate: true)
+        let tracking = model.timerState.map { $0.state == .running || $0.state == .onBreak } ?? false
+        if tracking, Prefs.bool(Prefs.confirmQuitWhileTracking) {
+            let alert = NSAlert()
+            alert.messageText = "EffiLens is tracking time"
+            alert.informativeText = "“\(model.timerState?.task?.taskName ?? "Current task")” is being tracked. Quitting stops tracking and syncs your time. To keep tracking, close the window instead — EffiLens stays in the menu bar."
+            alert.addButton(withTitle: "Stop Tracking & Quit")
+            alert.addButton(withTitle: "Cancel")
+            alert.showsSuppressionButton = true
+            alert.suppressionButton?.title = "Don't ask again"
+            let response = alert.runModal()
+            if alert.suppressionButton?.state == .on {
+                UserDefaults.standard.set(false, forKey: Prefs.confirmQuitWhileTracking)
             }
-            return .terminateLater
-        default:
-            return .terminateCancel
+            guard response == .alertFirstButtonReturn else { return .terminateCancel }
         }
+        Task { @MainActor in
+            if tracking { await model.runAgentSilently { try await $0.stopTracking() } }
+            await model.runAgentSilently { try await $0.syncNow() }
+            AgentLifecycle.stop()
+            sender.reply(toApplicationShouldTerminate: true)
+        }
+        return .terminateLater
     }
 }
 
